@@ -1,0 +1,46 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Release signing — NUNCA subir estas claves al repo
+android/key.properties
+*.jks
+*.keystore
+
+# Artefactos de build / herramientas (no son código fuente) — en cualquier nivel
+.dart_tool/
+/.flutter-plugins
+/.flutter-plugins-dependencies
+
+# Config local de herramientas / editor / IDE
+/.claude/
+.idea/
+*_backup/
+
+# Capturas / scratch personales
+/captura_actual.png
+/test_db.dart
+
+# Proyecto de práctica aparte (no es parte de BlackReader)
+/demoPract/
+
+# Notas personales / bitácoras / prompts (privadas, no van al repo público)
+/APRENDE_FLUTTER.md
+/CAMPANA_TIKTOK.md
+/DIAGNOSTICO_WORDMAP.md
+/FLUTTER_DB_CONTRACT.md
+/MEJORAS_PROGRESO.md
+/flutter_mvp_prompt.md
+/flutter_mvp_prompt_literal.md

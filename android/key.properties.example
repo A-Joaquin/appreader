@@ -1,0 +1,7 @@
+# Copia este archivo a "key.properties" (mismo directorio) y rellena tus datos.
+# El archivo real "key.properties" está en .gitignore: NUNCA lo subas al repo.
+storePassword=TU_CONTRASEÑA_DEL_KEYSTORE
+keyPassword=TU_CONTRASEÑA_DE_LA_CLAVE
+keyAlias=blackreader
+# Ruta absoluta al .jks. En Windows usa / o \\ (no una sola \).
+storeFile=C:/Users/Gaticornio/blackreader-release.jks
