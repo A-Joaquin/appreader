@@ -1,0 +1,22 @@
+# Despliegue de BlackReader (Flutter Web) en Netlify con deploy conectado a Git.
+# Netlify no trae Flutter preinstalado, así que lo clonamos en el paso de build.
+
+[build]
+  publish = "build/web"
+  command = """
+    git clone https://github.com/flutter/flutter.git --depth 1 -b stable _flutter && \
+    export PATH="$PATH:$(pwd)/_flutter/bin" && \
+    flutter pub get && \
+    flutter build web --release
+  """
+
+# Flutter Web es una SPA: cualquier ruta desconocida debe servir index.html
+# (si no, recargar en /reader/... daría 404).
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Nota: NO activamos Cross-Origin-Embedder-Policy (COEP). La app carga imágenes
+# de Supabase (otro origen) y COEP=require-corp las bloquearía. Sin esas
+# cabeceras, la base de datos WASM de Drift cae a IndexedDB y funciona igual.
