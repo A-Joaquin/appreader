@@ -1,57 +1,81 @@
 import 'package:flutter/material.dart';
 
-import '../../../data/models/block_report_model.dart';
+import '../../../data/models/word_report_model.dart';
 
-/// Hoja inferior para reportar un problema en el bloque que se está leyendo.
+/// Hoja inferior para reportar un problema en lo que se está leyendo.
 ///
 /// Se abre con el icono de bandera de la barra de traducción. El usuario elige
 /// el tipo de problema y, si quiere, escribe un detalle; con "Otro problema" el
 /// texto pasa a ser obligatorio (es lo único que explica el reporte).
 ///
-/// Devuelve el [BlockReport] a enviar, o `null` si se cerró sin reportar.
+/// Todo lo demás (fragmento, palabra tocada, su contrapartida, offset, idioma y
+/// una copia del texto) lo pone el lector sin preguntar: es lo que hace falta
+/// para localizar el problema después.
+///
+/// Devuelve el [WordReport] a enviar, o `null` si se cerró sin reportar.
 class ReportSheet extends StatefulWidget {
   const ReportSheet({
     super.key,
     required this.bookId,
     this.blockId,
+    this.fragmentId,
     this.pageNumber,
-    this.fragmentOrder,
-    this.word,
-    this.excerpt,
+    this.direction,
+    this.tappedWord,
+    this.counterpartWord,
+    this.charOffset,
+    this.originalText,
+    this.translatedText,
   });
 
   final int bookId;
   final int? blockId;
+  final int? fragmentId;
   final int? pageNumber;
-  final int? fragmentOrder;
 
-  /// Palabra seleccionada en la barra, si la había.
-  final String? word;
+  /// `'en_to_es'` o `'es_to_en'`, como lo guarda la base de datos.
+  final String? direction;
 
-  /// Texto del bloque/fragmento reportado, para guardarlo con el reporte.
-  final String? excerpt;
+  /// Palabra seleccionada en el cuerpo y la que le salía en la barra.
+  final String? tappedWord;
+  final String? counterpartWord;
+
+  /// Offset de [tappedWord] dentro del fragmento.
+  final int? charOffset;
+
+  /// Copia del fragmento reportado, en los dos idiomas.
+  final String? originalText;
+  final String? translatedText;
 
   /// Abre la hoja y devuelve el reporte a enviar (o null si se canceló).
-  static Future<BlockReport?> show(
+  static Future<WordReport?> show(
     BuildContext context, {
     required int bookId,
     int? blockId,
+    int? fragmentId,
     int? pageNumber,
-    int? fragmentOrder,
-    String? word,
-    String? excerpt,
+    String? direction,
+    String? tappedWord,
+    String? counterpartWord,
+    int? charOffset,
+    String? originalText,
+    String? translatedText,
   }) {
-    return showModalBottomSheet<BlockReport>(
+    return showModalBottomSheet<WordReport>(
       context: context,
       isScrollControlled: true, // deja sitio al teclado
       showDragHandle: true,
       builder: (_) => ReportSheet(
         bookId: bookId,
         blockId: blockId,
+        fragmentId: fragmentId,
         pageNumber: pageNumber,
-        fragmentOrder: fragmentOrder,
-        word: word,
-        excerpt: excerpt,
+        direction: direction,
+        tappedWord: tappedWord,
+        counterpartWord: counterpartWord,
+        charOffset: charOffset,
+        originalText: originalText,
+        translatedText: translatedText,
       ),
     );
   }
@@ -82,13 +106,17 @@ class _ReportSheetState extends State<ReportSheet> {
       return;
     }
     Navigator.of(context).pop(
-      BlockReport(
+      WordReport(
         bookId: widget.bookId,
         blockId: widget.blockId,
+        fragmentId: widget.fragmentId,
         pageNumber: widget.pageNumber,
-        fragmentOrder: widget.fragmentOrder,
-        word: widget.word,
-        excerpt: widget.excerpt,
+        direction: widget.direction,
+        tappedWord: widget.tappedWord,
+        counterpartWord: widget.counterpartWord,
+        charOffset: widget.charOffset,
+        originalText: widget.originalText,
+        translatedText: widget.translatedText,
         kind: kind,
         message: message.isEmpty ? null : message,
       ),
@@ -184,12 +212,17 @@ class _ReportSheetState extends State<ReportSheet> {
     );
   }
 
-  /// "Página 12 · «palabra»" — para que se vea qué se está reportando.
+  /// "Página 12 · «palabra» → «word»" — para que se vea qué se está reportando.
   String _contextLabel() {
     final parts = <String>[];
     if (widget.pageNumber != null) parts.add('Página ${widget.pageNumber}');
-    final word = widget.word;
-    if (word != null && word.isNotEmpty) parts.add('«$word»');
+    final word = widget.tappedWord;
+    if (word != null && word.isNotEmpty) {
+      final counterpart = widget.counterpartWord;
+      parts.add(counterpart != null && counterpart.isNotEmpty
+          ? '«$word» → «$counterpart»'
+          : '«$word»');
+    }
     return parts.isEmpty ? 'En este bloque' : parts.join('  ·  ');
   }
 }

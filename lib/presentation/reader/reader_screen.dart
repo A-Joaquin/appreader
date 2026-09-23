@@ -11,8 +11,10 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/settings/reader_settings.dart';
 import '../../core/widgets/brand_title.dart';
+import '../../data/models/block_fragment_model.dart';
 import '../../data/models/book_model.dart';
 import '../../data/models/content_block_model.dart';
+import '../../data/models/word_report_model.dart';
 import '../../data/repositories/book_repository.dart';
 import '../../data/repositories/reader_repository.dart';
 import '../../data/repositories/reading_progress_store.dart';
@@ -361,26 +363,28 @@ class _ReaderViewState extends State<_ReaderView>
     block ??= state.blocks.isNotEmpty ? state.blocks.first : null;
     if (block == null) return;
 
-    // Guardamos el texto reportado (original y traducción) para que el reporte
+    // Guardamos una copia del fragmento en los dos idiomas para que el reporte
     // siga siendo legible aunque el libro se recargue.
-    String? excerpt;
+    BlockFragment? fragment;
     final index = state.targetFragment;
     if (index != null && index >= 0 && index < state.pageFragments.length) {
-      final fragment = state.pageFragments[index];
-      final translated = fragment.translatedText;
-      excerpt = (translated != null && translated.isNotEmpty)
-          ? '${fragment.originalText}\n→ $translated'
-          : fragment.originalText;
+      fragment = state.pageFragments[index];
     }
 
     final report = await ReportSheet.show(
       context,
       bookId: block.bookId,
       blockId: block.id,
+      fragmentId: fragment?.id,
       pageNumber: state.currentPage,
-      fragmentOrder: state.selectedFragmentOrder,
-      word: state.tappedBodyWord,
-      excerpt: excerpt,
+      direction: WordReport.wireDirection(
+        ReaderSettingsScope.of(context).direction,
+      ),
+      tappedWord: state.tappedBodyWord,
+      counterpartWord: state.tappedBarWord,
+      charOffset: state.selectedCharOffset,
+      originalText: fragment?.originalText,
+      translatedText: fragment?.translatedText,
     );
     if (report == null || !context.mounted) return;
 

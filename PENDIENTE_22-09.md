@@ -7,30 +7,38 @@ que bloquea a lo que puede esperar.
 
 ## 1. Correr la migración de reportes (BLOQUEANTE)
 
-Sin esto la función de reportar **no guarda nada en el servidor**.
+Sin esto la función de reportar **no guarda el mensaje ni se puede marcar nada
+como resuelto**.
 
-- Archivo: `supabase/migrations/0002_block_reports.sql`
+- Archivo: `supabase/migrations/0002_word_reports.sql`
 - Cómo: pegar el archivo entero en Supabase → SQL Editor → Run (igual que la 0001).
-- Crea: tabla `block_reports`, los enums `report_kind` / `report_status` y las
-  políticas RLS (cada usuario ve solo los suyos; el admin, todos).
+- **No crea la tabla**: `word_reports` ya existía con datos. Le añade `message`,
+  `status`, `resolved_at` y `resolved_by`, los valores de `word_report_type` que
+  faltaban (`bad_translation`, `bad_format`, `other` — `missing_translation` ya
+  estaba y se conserva) y le pone RLS con políticas. Es idempotente.
+
+Ojo con la RLS: hasta correrla, `word_reports` **se puede leer con la anon key**
+sin estar logueado (probado: devuelve las filas con su `user_id`).
 
 Mientras no se corra, la app no se rompe: el insert falla y el reporte se queda
-en la cola local (`SharedPreferences`), y se sube solo en cuanto exista la tabla.
+en la cola local (`SharedPreferences`), y se sube solo en cuanto exista la
+columna.
 
 ## 2. Probar el flujo de reportes de punta a punta
 
-No se ha podido probar contra la base de datos real porque la tabla aún no
-existe. Lo que SÍ está comprobado sin base de datos (`test/block_report_test.dart`):
-la ida y vuelta por la cola local no pierde campos, y el payload del insert usa
-exactamente las columnas de la 0002 (`user_id`, `book_id`, `block_id`,
-`page_number`, `fragment_order`, `word`, `excerpt`, `kind`, `message`).
+No se ha podido probar contra la base de datos real porque faltan las columnas.
+Lo que SÍ está comprobado sin base de datos (`test/word_report_test.dart`): la
+ida y vuelta por la cola local no pierde campos, el payload del insert usa
+exactamente las columnas de `word_reports`, y las filas antiguas (sin `message`
+ni `status`) se siguen leyendo bien en el panel.
 
 Queda por verificar a mano, en este orden:
 
 1. En el lector, tocar una palabra → icono de **bandera** en la barra de traducción.
 2. Elegir tipo de problema (+ mensaje opcional; obligatorio en "Otro problema") → Enviar.
 3. Entrar en `/admin` → pestaña **Reportes** → que aparezca con libro, página,
-   palabra y el texto reportado.
+   la palabra y su traducción, y el texto reportado en los dos idiomas. Ahí
+   deberían salir también los 2 reportes del 30/06 que ya estaban en la tabla.
 4. Marcar **resuelto** y que desaparezca del filtro "Solo pendientes".
 5. Probar en **modo avión**: debe decir "Se enviará cuando haya conexión" y
    subirse después al volver la red o al reiniciar sesión.

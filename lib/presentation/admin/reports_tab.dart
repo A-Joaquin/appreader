@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../data/models/block_report_model.dart';
+import '../../data/models/word_report_model.dart';
 import '../../data/repositories/report_store.dart';
 
 /// Pestaña de reportes del panel de administración.
@@ -21,7 +21,7 @@ class _ReportsTabState extends State<ReportsTab> {
 
   bool _loading = true;
   String? _error;
-  List<BlockReport> _reports = const [];
+  List<WordReport> _reports = const [];
   Map<int, String> _bookTitles = const {};
   Map<String, String> _userNames = const {};
   bool _onlyOpen = true;
@@ -59,7 +59,7 @@ class _ReportsTabState extends State<ReportsTab> {
     }
   }
 
-  Future<void> _toggleResolved(BlockReport report) async {
+  Future<void> _toggleResolved(WordReport report) async {
     final id = report.id;
     if (id == null) return;
     final resolve = report.status != 'resolved';
@@ -75,7 +75,7 @@ class _ReportsTabState extends State<ReportsTab> {
     }
   }
 
-  List<BlockReport> get _visible => _onlyOpen
+  List<WordReport> get _visible => _onlyOpen
       ? _reports.where((r) => r.status != 'resolved').toList()
       : _reports;
 
@@ -161,7 +161,7 @@ class _ReportTile extends StatelessWidget {
     required this.onToggleResolved,
   });
 
-  final BlockReport report;
+  final WordReport report;
   final String bookTitle;
   final String userName;
   final VoidCallback onToggleResolved;
@@ -207,8 +207,8 @@ class _ReportTile extends StatelessWidget {
               [
                 bookTitle,
                 if (report.pageNumber != null) 'pág. ${report.pageNumber}',
-                if (report.word != null && report.word!.isNotEmpty)
-                  '«${report.word}»',
+                if (report.tappedWord != null && report.tappedWord!.isNotEmpty)
+                  _wordPair(report),
                 userName,
               ].join('  ·  '),
               style: textTheme.bodySmall?.copyWith(
@@ -219,7 +219,7 @@ class _ReportTile extends StatelessWidget {
               const SizedBox(height: 8),
               Text(report.message!, style: textTheme.bodyMedium),
             ],
-            if (report.excerpt != null && report.excerpt!.isNotEmpty) ...[
+            if (_hasExcerpt(report)) ...[
               const SizedBox(height: 8),
               Container(
                 width: double.infinity,
@@ -228,11 +228,28 @@ class _ReportTile extends StatelessWidget {
                   color: scheme.onSurface.withValues(alpha: 0.04),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: Text(
-                  report.excerpt!,
-                  style: textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurface.withValues(alpha: 0.75),
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (report.originalText != null &&
+                        report.originalText!.isNotEmpty)
+                      Text(
+                        report.originalText!,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.75),
+                        ),
+                      ),
+                    if (report.translatedText != null &&
+                        report.translatedText!.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        '→ ${report.translatedText}',
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurface.withValues(alpha: 0.55),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
             ],
@@ -252,6 +269,19 @@ class _ReportTile extends StatelessWidget {
       ),
     );
   }
+
+  /// "«palabra» → «traducción»", o solo la palabra si el word_map no tenía
+  /// contrapartida.
+  static String _wordPair(WordReport report) {
+    final counterpart = report.counterpartWord;
+    return counterpart != null && counterpart.isNotEmpty
+        ? '«${report.tappedWord}» → «$counterpart»'
+        : '«${report.tappedWord}»';
+  }
+
+  static bool _hasExcerpt(WordReport report) =>
+      (report.originalText != null && report.originalText!.isNotEmpty) ||
+      (report.translatedText != null && report.translatedText!.isNotEmpty);
 
   String _shortDate(DateTime utc) {
     final d = utc.toLocal();

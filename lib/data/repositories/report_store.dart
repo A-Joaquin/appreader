@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/network/network_timeout.dart';
-import '../models/block_report_model.dart';
+import '../models/word_report_model.dart';
 
 /// Envía y consulta los reportes de bloques.
 ///
@@ -14,7 +14,7 @@ import '../models/block_report_model.dart';
 /// enviar el siguiente o al iniciar sesión). El usuario nunca pierde lo que
 /// escribió ni ve un error por estar sin internet.
 class ReportStore {
-  static const String _queueKey = 'pending_block_reports';
+  static const String _queueKey = 'pending_word_reports';
   static const int _maxQueued = 50;
 
   SupabaseClient get _client => Supabase.instance.client;
@@ -22,12 +22,12 @@ class ReportStore {
 
   /// Envía un reporte. Devuelve `true` si llegó al servidor y `false` si quedó
   /// en la cola local — en ambos casos el reporte está guardado.
-  Future<bool> submit(BlockReport report) async {
+  Future<bool> submit(WordReport report) async {
     final uid = _uid;
     if (uid == null) return false;
     try {
       await _client
-          .from('block_reports')
+          .from('word_reports')
           .insert(report.toInsert(uid))
           .timeout(kNetworkTimeout);
       // Aprovechamos que hay red para vaciar lo que hubiera pendiente.
@@ -48,11 +48,11 @@ class ReportStore {
     final pending = _read(prefs);
     if (pending.isEmpty) return;
 
-    final stillPending = <BlockReport>[];
+    final stillPending = <WordReport>[];
     for (final report in pending) {
       try {
         await _client
-            .from('block_reports')
+            .from('word_reports')
             .insert(report.toInsert(uid))
             .timeout(kNetworkTimeout);
       } catch (_) {
@@ -73,21 +73,21 @@ class ReportStore {
 
   /// Todos los reportes, del más reciente al más antiguo. Solo devuelve algo
   /// para un admin (lo impone la RLS).
-  Future<List<BlockReport>> fetchAll() async {
+  Future<List<WordReport>> fetchAll() async {
     final rows = await _client
-        .from('block_reports')
+        .from('word_reports')
         .select('*')
         .order('created_at', ascending: false)
         .timeout(kNetworkTimeout);
     return (rows as List)
-        .map((r) => BlockReport.fromJson(r as Map<String, dynamic>))
+        .map((r) => WordReport.fromJson(r as Map<String, dynamic>))
         .toList();
   }
 
   /// Marca un reporte como resuelto (o lo reabre).
   Future<void> setResolved(int id, bool resolved) async {
     final uid = _uid;
-    await _client.from('block_reports').update({
+    await _client.from('word_reports').update({
       'status': resolved ? 'resolved' : 'open',
       'resolved_at': resolved ? DateTime.now().toUtc().toIso8601String() : null,
       'resolved_by': resolved ? uid : null,
@@ -96,7 +96,7 @@ class ReportStore {
 
   // --- Cola local ---
 
-  Future<void> _enqueue(BlockReport report) async {
+  Future<void> _enqueue(WordReport report) async {
     final prefs = await SharedPreferences.getInstance();
     final pending = _read(prefs)..add(report);
     // Tope defensivo: si alguien reporta mucho sin conexión, nos quedamos con
@@ -107,12 +107,12 @@ class ReportStore {
     await _write(prefs, pending);
   }
 
-  List<BlockReport> _read(SharedPreferences prefs) {
+  List<WordReport> _read(SharedPreferences prefs) {
     final raw = prefs.getStringList(_queueKey) ?? const [];
-    final out = <BlockReport>[];
+    final out = <WordReport>[];
     for (final s in raw) {
       try {
-        out.add(BlockReport.fromJson(jsonDecode(s) as Map<String, dynamic>));
+        out.add(WordReport.fromJson(jsonDecode(s) as Map<String, dynamic>));
       } catch (_) {
         // Entrada corrupta: se descarta.
       }
@@ -120,7 +120,7 @@ class ReportStore {
     return out;
   }
 
-  Future<void> _write(SharedPreferences prefs, List<BlockReport> reports) async {
+  Future<void> _write(SharedPreferences prefs, List<WordReport> reports) async {
     if (reports.isEmpty) {
       await prefs.remove(_queueKey);
       return;
