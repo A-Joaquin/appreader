@@ -67,7 +67,7 @@ dev_dependencies:
 
 # App icon generation (run: dart run flutter_launcher_icons)
 flutter_launcher_icons:
-  image_path: "assets/branding/app_icon.png"
+  image_path: "branding/icon_master.png"
   android: true
   ios: true
   remove_alpha_ios: true
@@ -78,7 +78,7 @@ flutter_launcher_icons:
   min_sdk_android: 21
   # Android adaptive icon (API 26+): white background + your art on top.
   adaptive_icon_background: "#FFFFFF"
-  adaptive_icon_foreground: "assets/branding/app_icon.png"
+  adaptive_icon_foreground: "branding/icon_adaptive.png"
 
 # Native splash screen (run: dart run flutter_native_splash:create)
 # Uses the SQUARE app icon so Android 12+ (which forces a square icon slot)
@@ -87,13 +87,13 @@ flutter_native_splash:
   # Mismo off-white que AppTheme.background y que el splash animado, para que
   # no haya un destello blanco antes de que arranque la animación.
   color: "#FAF8F4"
-  image: "assets/branding/app_icon.png"
+  image: "branding/splash_master.png"
   android: true
   ios: true
   web: true
   android_12:
     color: "#FAF8F4"
-    image: "assets/branding/app_icon.png"
+    image: "branding/splash_master.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
