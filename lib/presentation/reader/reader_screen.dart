@@ -16,11 +16,13 @@ import '../../data/models/content_block_model.dart';
 import '../../data/repositories/book_repository.dart';
 import '../../data/repositories/reader_repository.dart';
 import '../../data/repositories/reading_progress_store.dart';
+import '../../data/repositories/report_store.dart';
 import 'bloc/reader_bloc.dart';
 import 'bloc/reader_event.dart';
 import 'bloc/reader_state.dart';
 import 'widgets/code_block_widget.dart';
 import 'widgets/image_block_widget.dart';
+import 'widgets/report_sheet.dart';
 import 'widgets/text_block_widget.dart';
 import 'widgets/translation_bar.dart';
 
@@ -328,6 +330,7 @@ class _ReaderViewState extends State<_ReaderView>
                               onClose: () => context
                                   .read<ReaderBloc>()
                                   .add(const HideTranslation()),
+                              onReport: () => _openReport(context, state),
                             ),
                           ),
                         ),
@@ -340,6 +343,54 @@ class _ReaderViewState extends State<_ReaderView>
             ],
           );
         },
+      ),
+    );
+  }
+
+  /// Abre la hoja de reporte para el bloque que se está leyendo y envía el
+  /// resultado. Sin conexión el reporte queda en cola y se sube después, así
+  /// que al usuario se le confirma igual.
+  Future<void> _openReport(BuildContext context, ReaderState state) async {
+    ContentBlock? block;
+    for (final b in state.blocks) {
+      if (b.id == state.selectedBlockId) {
+        block = b;
+        break;
+      }
+    }
+    block ??= state.blocks.isNotEmpty ? state.blocks.first : null;
+    if (block == null) return;
+
+    // Guardamos el texto reportado (original y traducción) para que el reporte
+    // siga siendo legible aunque el libro se recargue.
+    String? excerpt;
+    final index = state.targetFragment;
+    if (index != null && index >= 0 && index < state.pageFragments.length) {
+      final fragment = state.pageFragments[index];
+      final translated = fragment.translatedText;
+      excerpt = (translated != null && translated.isNotEmpty)
+          ? '${fragment.originalText}\n→ $translated'
+          : fragment.originalText;
+    }
+
+    final report = await ReportSheet.show(
+      context,
+      bookId: block.bookId,
+      blockId: block.id,
+      pageNumber: state.currentPage,
+      fragmentOrder: state.selectedFragmentOrder,
+      word: state.tappedBodyWord,
+      excerpt: excerpt,
+    );
+    if (report == null || !context.mounted) return;
+
+    final sent = await ReportStore().submit(report);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(sent
+            ? 'Gracias, reporte enviado.'
+            : 'Guardado. Se enviará cuando haya conexión.'),
       ),
     );
   }

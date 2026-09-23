@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Admin-only panel. Lists every user with their reading progress per book,
-/// last reading activity, downloaded books, and a ban / unban switch.
+import 'reports_tab.dart';
+
+/// Admin-only panel. Dos pestañas: los usuarios (progreso por libro, última
+/// actividad, descargas y ban) y los reportes que envían los lectores desde la
+/// barra de traducción.
 ///
 /// Access is gated by the router (`/admin` is admin-only) and by RLS
 /// (admin policies on `profiles` / `reading_progress` / `user_downloads`).
@@ -111,18 +114,37 @@ class _AdminScreenState extends State<AdminScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Administración'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Recargar',
-            onPressed: _loading ? null : _load,
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Administración'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Recargar',
+              onPressed: _loading ? null : _load,
+            ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.people_outline), text: 'Usuarios'),
+              Tab(icon: Icon(Icons.flag_outlined), text: 'Reportes'),
+            ],
           ),
-        ],
+        ),
+        body: TabBarView(
+          children: [
+            _buildUsers(context),
+            const ReportsTab(),
+          ],
+        ),
       ),
-      body: _loading
+    );
+  }
+
+  Widget _buildUsers(BuildContext context) {
+    return _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(
@@ -157,8 +179,7 @@ class _AdminScreenState extends State<AdminScreen> {
                             onBanChanged: (b) => _setBanned(_users[i], b),
                           ),
                         ),
-                ),
-    );
+                );
   }
 }
 

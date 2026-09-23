@@ -14,6 +14,7 @@ class TranslationBar extends StatefulWidget {
     this.bodyWord,
     this.barWord,
     this.onClose,
+    this.onReport,
   });
 
   final List<BlockFragment> fragments;
@@ -40,12 +41,19 @@ class TranslationBar extends StatefulWidget {
   /// Dismisses the bar (close button).
   final VoidCallback? onClose;
 
+  /// Abre el reporte de problemas del bloque que se está leyendo (bandera).
+  final VoidCallback? onReport;
+
   @override
   State<TranslationBar> createState() => _TranslationBarState();
 }
 
 class _TranslationBarState extends State<TranslationBar> {
   static const Color _highlightColor = Color(0xFFFFF3BF);
+
+  /// Saltos de línea / tabs a espacios, manteniendo la longitud (1 char por 1
+  /// char) para no mover los offsets de [highlightStart] / [highlightEnd].
+  static String _flatten(String s) => s.replaceAll(RegExp(r'[\n\r\t]'), ' ');
 
   /// Marks the highlighted translated word so we can center it in the viewport.
   final GlobalKey _highlightKey = GlobalKey();
@@ -121,6 +129,14 @@ class _TranslationBarState extends State<TranslationBar> {
                       ),
                     ),
                   ),
+                  if (widget.onReport != null)
+                    IconButton(
+                      icon: const Icon(Icons.flag_outlined, size: 20),
+                      tooltip: 'Reportar un problema',
+                      visualDensity: VisualDensity.compact,
+                      color: scheme.onSurface.withValues(alpha: 0.6),
+                      onPressed: widget.onReport,
+                    ),
                   if (widget.onClose != null)
                     IconButton(
                       icon: const Icon(Icons.close, size: 20),
@@ -160,15 +176,20 @@ class _TranslationBarState extends State<TranslationBar> {
     // The bar shows the opposite language to the body. In esToEn the chip is the
     // English original; in enToEs it's the Spanish translation (falling back to
     // the original when a fragment isn't translated yet).
-    final String text;
+    final String raw;
     if (widget.direction == TranslationDirection.esToEn) {
-      text = fragment.originalText;
+      raw = fragment.originalText;
     } else {
       final translated = fragment.translatedText;
-      text = (translated != null && translated.isNotEmpty)
+      raw = (translated != null && translated.isNotEmpty)
           ? translated
           : fragment.originalText;
     }
+    // El chip es de una sola línea: un \n del PDF lo cortaría ahí y se perdería
+    // el resto de la frase (típico en listas, donde el fragmento trae varias
+    // viñetas). Se aplana a espacios 1 char por 1 char, así los offsets del
+    // resaltado siguen cuadrando.
+    final text = _flatten(raw);
 
     final style = TextStyle(
       fontSize: 15,
