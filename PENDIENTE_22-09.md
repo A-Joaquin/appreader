@@ -5,24 +5,18 @@ que bloquea a lo que puede esperar.
 
 ---
 
-## 1. Correr la migración de reportes (BLOQUEANTE)
+## 1. ~~Correr la migración de reportes~~ — HECHO (22/09)
 
-Sin esto la función de reportar **no guarda el mensaje ni se puede marcar nada
-como resuelto**.
+`supabase/migrations/0002_word_reports.sql`, corrida paso a paso. No recrea la
+tabla: `word_reports` ya existía con datos.
 
-- Archivo: `supabase/migrations/0002_word_reports.sql`
-- Cómo: pegar el archivo entero en Supabase → SQL Editor → Run (igual que la 0001).
-- **No crea la tabla**: `word_reports` ya existía con datos. Le añade `message`,
-  `status`, `resolved_at` y `resolved_by`, los valores de `word_report_type` que
-  faltaban (`bad_translation`, `bad_format`, `other` — `missing_translation` ya
-  estaba y se conserva) y le pone RLS con políticas. Es idempotente.
+Comprobado contra la base después de correrla:
 
-Ojo con la RLS: hasta correrla, `word_reports` **se puede leer con la anon key**
-sin estar logueado (probado: devuelve las filas con su `user_id`).
-
-Mientras no se corra, la app no se rompe: el insert falla y el reporte se queda
-en la cola local (`SharedPreferences`), y se sube solo en cuanto exista la
-columna.
+- Columnas `message`, `status`, `resolved_at` y `resolved_by`: las cuatro.
+- Enum `word_report_type`: `missing_translation` (el de antes, conservado) más
+  `bad_translation`, `bad_format` y `other`.
+- RLS activa: la anon key sin login ya devuelve `[]`. **Antes listaba la tabla
+  entera con el `user_id` de quien reportó.**
 
 ## 2. Probar el flujo de reportes de punta a punta
 
@@ -49,7 +43,9 @@ El arreglo del splash colgado está hecho y compila, pero **nunca se probó en u
 dispositivo** (sigue sin haber ninguno en `flutter devices`: solo Windows, Chrome
 y Edge).
 
-- Instalar `build/app/outputs/flutter-apk/app-release.apk`.
+- Instalar `build/app/outputs/flutter-apk/app-release.apk`. **Rebuild del 22/09**,
+  ya trae los saltos de línea del lector y los reportes; el APK anterior era del
+  21/09 y no los tenía.
 - Activar **modo avión** y abrir la app: debe pasar del splash a la biblioteca
   con los libros descargados, sin quedarse en la animación.
 
