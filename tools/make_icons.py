@@ -2,10 +2,11 @@
 """
 Genera los iconos de BlackReader a partir de una sola imagen fuente.
 
-USO:
+USO (en este orden):
     python tools/make_icons.py            # regenera desde branding/app_icon_source.png
     dart run flutter_launcher_icons       # luego, los iconos nativos
     dart run flutter_native_splash:create # y el splash nativo
+    python tools/make_icons.py --post     # y arregla lo que esos dejan mal
 
 QUÉ SALE DE AQUÍ (nada de esto se edita a mano):
 
@@ -80,9 +81,36 @@ def flatten(image: Image.Image, color: tuple[int, int, int]) -> Image.Image:
     return out
 
 
+def post() -> None:
+    """Arregla los iconos "maskable" de la PWA.
+
+    `flutter_launcher_icons` genera `Icon-maskable-*.png` como copia exacta de
+    los normales, y eso está mal: un icono maskable lo recorta el sistema con
+    su propia máscara (círculo en Android) y solo garantiza el 80 % central.
+    Con el cubo al 88 % se le cortan las esquinas al instalar la PWA. Se
+    reescriben con el mismo margen que el icono adaptativo de Android.
+    """
+    art = cube()
+    icons = ROOT / 'web' / 'icons'
+    if not icons.is_dir():
+        sys.exit(f'No encuentro {icons} — ¿has corrido flutter_launcher_icons?')
+
+    for size in (192, 512):
+        path = icons / f'Icon-maskable-{size}.png'
+        if not path.exists():
+            print(f'  (no existe {path.name}, lo salto)')
+            continue
+        square(art, size, 0.62).save(path, optimize=True)
+        print(f'  {path.relative_to(ROOT).as_posix():38s} {size:4d}px  cubo al 62 %')
+
+
 def main() -> None:
     if not SOURCE.exists():
         sys.exit(f'No encuentro la fuente: {SOURCE}')
+
+    if '--post' in sys.argv:
+        post()
+        return
 
     art = cube()
     print(f'fuente {SOURCE.name}: cubo recortado a {art.size[0]}x{art.size[1]}')
