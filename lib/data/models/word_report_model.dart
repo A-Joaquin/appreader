@@ -75,7 +75,9 @@ class WordReport {
 
   final ReportKind kind;
   final String? message;
-  final String status; // 'open' | 'resolved'
+
+  /// 'open' u 'resolved'. En la base es una columna text con CHECK, no un enum.
+  final String status;
   final DateTime? createdAt;
   final String? userId;
 
