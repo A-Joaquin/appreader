@@ -10,6 +10,7 @@ import '../../data/models/book_model.dart';
 import '../../data/repositories/book_download_service.dart';
 import '../../data/repositories/book_repository.dart';
 import '../../data/repositories/cover_store.dart';
+import '../../data/repositories/download_manager.dart';
 import '../../data/repositories/reading_progress_store.dart';
 
 /// Book detail: cover, title, author, metadata and a "read / continue" button.
@@ -146,55 +147,81 @@ class _OfflineButton extends StatefulWidget {
   State<_OfflineButton> createState() => _OfflineButtonState();
 }
 
-enum _OfflineStatus { checking, available, downloading, downloaded }
+enum _OfflineStatus { checking, available, downloaded }
 
 class _OfflineButtonState extends State<_OfflineButton> {
   final LocalBookStore _local = LocalBookStore(AppDatabase.instance);
   late final BookDownloadService _downloader =
       BookDownloadService(Supabase.instance.client, _local);
+  final DownloadManager _manager = DownloadManager.instance;
 
   _OfflineStatus _status = _OfflineStatus.checking;
-  double _progress = 0;
+
+  /// Imágenes del libro que no están en la caché. Mientras haya alguna, el
+  /// libro se lee bien pero se ve con huecos sin conexión, así que se dice y
+  /// se ofrece completarlo.
+  int _missingImages = 0;
 
   @override
   void initState() {
     super.initState();
+    _manager.addListener(_onManagerChanged);
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    _manager.removeListener(_onManagerChanged);
+    super.dispose();
+  }
+
+  /// La descarga vive en [DownloadManager], no aquí: esta pantalla solo se
+  /// vuelve a pintar cuando aquello avanza, y al terminar recuenta.
+  void _onManagerChanged() {
+    if (!mounted) return;
+    setState(() {});
+    if (!_manager.isRunning(widget.book.id)) _refresh();
   }
 
   Future<void> _refresh() async {
     final downloaded = await _local.isDownloaded(widget.book.id);
+    final missing =
+        downloaded ? await _downloader.missingImages(widget.book.id) : const [];
     if (!mounted) return;
-    setState(() => _status =
-        downloaded ? _OfflineStatus.downloaded : _OfflineStatus.available);
+    setState(() {
+      _status =
+          downloaded ? _OfflineStatus.downloaded : _OfflineStatus.available;
+      _missingImages = missing.length;
+    });
   }
 
   Future<void> _download() async {
-    setState(() {
-      _status = _OfflineStatus.downloading;
-      _progress = 0;
-    });
-    try {
-      await _downloader.download(
-        widget.book.id,
-        onProgress: (p) {
-          if (mounted) setState(() => _progress = p);
-        },
-      );
-      if (!mounted) return;
-      setState(() => _status = _OfflineStatus.downloaded);
-      _toast('Descargado para leer sin conexión');
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _status = _OfflineStatus.available);
-      _toast('No se pudo descargar: $e');
+    await _manager.start(widget.book.id, _downloader);
+    if (!mounted) return;
+    final error = _manager.errorOf(widget.book.id);
+    _toast(error == null
+        ? 'Descargado para leer sin conexión'
+        : 'No se pudo descargar: $error');
+    _manager.clearError(widget.book.id);
+  }
+
+  Future<void> _completeImages() async {
+    await _manager.completeImages(widget.book.id, _downloader);
+    if (!mounted) return;
+    final error = _manager.errorOf(widget.book.id);
+    if (error != null) {
+      _toast('No se pudieron bajar las imágenes: $error');
+      _manager.clearError(widget.book.id);
     }
   }
 
   Future<void> _delete() async {
     await _local.deleteBook(widget.book.id);
     if (!mounted) return;
-    setState(() => _status = _OfflineStatus.available);
+    setState(() {
+      _status = _OfflineStatus.available;
+      _missingImages = 0;
+    });
     _toast('Descarga eliminada');
   }
 
@@ -208,38 +235,72 @@ class _OfflineButtonState extends State<_OfflineButton> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
+    // Una descarga en curso manda sobre todo lo demás: puede haber empezado en
+    // esta pantalla o haber seguido viva mientras el usuario andaba por otra.
+    final progress = _manager.progressOf(widget.book.id);
+    if (progress != null) {
+      final pct = (progress * 100).clamp(0, 100).toStringAsFixed(0);
+      return Column(
+        children: [
+          LinearProgressIndicator(value: progress == 0 ? null : progress),
+          const SizedBox(height: 8),
+          Text('Descargando… $pct%',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 2),
+          Text(
+            'Puedes salir de aquí: la descarga sigue.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurface.withValues(alpha: 0.5),
+                ),
+          ),
+        ],
+      );
+    }
+
     switch (_status) {
       case _OfflineStatus.checking:
         return const SizedBox(height: 40);
 
-      case _OfflineStatus.downloading:
-        final pct = (_progress * 100).clamp(0, 100).toStringAsFixed(0);
+      case _OfflineStatus.downloaded:
         return Column(
           children: [
-            LinearProgressIndicator(value: _progress == 0 ? null : _progress),
-            const SizedBox(height: 8),
-            Text('Descargando… $pct%',
-                style: Theme.of(context).textTheme.bodySmall),
-          ],
-        );
-
-      case _OfflineStatus.downloaded:
-        return Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.offline_pin, size: 18, color: scheme.primary),
-            const SizedBox(width: 6),
-            Text(
-              'Disponible sin conexión',
-              style: TextStyle(
-                  color: scheme.primary, fontWeight: FontWeight.w600),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _missingImages == 0 ? Icons.offline_pin : Icons.cloud_off,
+                  size: 18,
+                  color: _missingImages == 0 ? scheme.primary : scheme.error,
+                ),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(
+                    _missingImages == 0
+                        ? 'Disponible sin conexión'
+                        : 'Falta${_missingImages == 1 ? '' : 'n'} '
+                            '$_missingImages imagen'
+                            '${_missingImages == 1 ? '' : 'es'}',
+                    style: TextStyle(
+                      color:
+                          _missingImages == 0 ? scheme.primary : scheme.error,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                TextButton.icon(
+                  onPressed: _delete,
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Eliminar'),
+                ),
+              ],
             ),
-            const SizedBox(width: 4),
-            TextButton.icon(
-              onPressed: _delete,
-              icon: const Icon(Icons.delete_outline, size: 18),
-              label: const Text('Eliminar'),
-            ),
+            if (_missingImages > 0)
+              TextButton.icon(
+                onPressed: _completeImages,
+                icon: const Icon(Icons.download_outlined, size: 18),
+                label: const Text('Completar descarga'),
+              ),
           ],
         );
 
