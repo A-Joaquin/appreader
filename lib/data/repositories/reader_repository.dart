@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/network/network_timeout.dart';
 import '../local/app_database.dart';
 import '../local/local_book_store.dart';
 import '../models/block_fragment_model.dart';
@@ -22,7 +23,8 @@ class ReaderRepository {
         .select('*')
         .eq('book_id', bookId)
         .eq('page_number', pageNumber)
-        .order('sequence_order', ascending: true);
+        .order('sequence_order', ascending: true)
+        .timeout(kNetworkTimeout);
 
     return (response as List)
         .map((json) => ContentBlock.fromJson(json as Map<String, dynamic>))
@@ -43,7 +45,8 @@ class ReaderRepository {
           .from('block_fragments')
           .select('*')
           .inFilter('block_id', blockIds)
-          .order('fragment_order', ascending: true);
+          .order('fragment_order', ascending: true)
+          .timeout(kNetworkTimeout);
       fragments = (response as List)
           .map((json) => BlockFragment.fromJson(json as Map<String, dynamic>))
           .toList();

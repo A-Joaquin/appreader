@@ -1,6 +1,7 @@
 import 'package:flutter_cache_manager/flutter_cache_manager.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/network/network_timeout.dart';
 import '../local/local_book_store.dart';
 import '../models/block_fragment_model.dart';
 import '../models/book_model.dart';
@@ -74,7 +75,7 @@ class BookDownloadService {
           'user_id': uid,
           'book_id': bookId,
           'downloaded_at': DateTime.now().toUtc().toIso8601String(),
-        }, onConflict: 'user_id,book_id');
+        }, onConflict: 'user_id,book_id').timeout(kNetworkTimeout);
       } catch (_) {
         // Offline or transient error: local download already succeeded.
       }

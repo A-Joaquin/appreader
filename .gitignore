@@ -33,6 +33,9 @@ android/key.properties
 /captura_actual.png
 /test_db.dart
 
+# Notas / pendientes privados (NO subir; listan temas de seguridad)
+/PENDIENTE_RLS.txt
+
 # Proyecto de práctica aparte (no es parte de BlackReader)
 /demoPract/
 

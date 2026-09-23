@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/network/network_timeout.dart';
 import 'reading_progress_store.dart';
+import 'report_store.dart';
 
 /// Single source of truth for the auth/session state across the app.
 ///
@@ -11,19 +14,34 @@ import 'reading_progress_store.dart';
 /// user's `profiles.role` / `profiles.status` cached, and notifies listeners
 /// (used as `go_router`'s `refreshListenable`) so the router re-evaluates
 /// redirects whenever the user logs in or out.
+///
+/// **Offline-first**: el arranque nunca depende de la red. La sesión vive en
+/// el almacenamiento local del dispositivo, así que si el usuario ya entró
+/// alguna vez puede seguir usando la app sin internet; el rol/estado se sirven
+/// desde caché y se refrescan en segundo plano cuando hay conexión.
 class AuthController extends ChangeNotifier {
   AuthController._(this._client) {
-    _sub = _client.auth.onAuthStateChange.listen(_onAuthChange);
+    _sub = _client.auth.onAuthStateChange.listen(
+      _onAuthChange,
+      // Un fallo de red al refrescar el token llega como error del stream.
+      // No es motivo para cerrar sesión ni para quedarse en el splash.
+      onError: (_) => _resolveBootstrap(),
+    );
+    // Red de seguridad: pase lo que pase con Supabase, el splash sale.
+    Timer(kBootstrapTimeout, _resolveBootstrap);
   }
 
   /// Shared instance for the whole app.
   static final AuthController instance =
       AuthController._(Supabase.instance.client);
 
-  final SupabaseClient _client;
-  late final dynamic _sub;
+  static const String _rolePrefix = 'profile_role_';
+  static const String _statusPrefix = 'profile_status_';
 
-  /// True until the first auth event (incl. restored session) is processed.
+  final SupabaseClient _client;
+  late final StreamSubscription<AuthState> _sub;
+
+  /// True until the session is resolved (from local storage, not the network).
   /// While bootstrapping the splash stays on screen.
   bool _bootstrapping = true;
   bool get bootstrapping => _bootstrapping;
@@ -42,15 +60,46 @@ class AuthController extends ChangeNotifier {
   /// app launch (after the session is known).
   bool _syncedLocalProgress = false;
 
-  Future<void> _onAuthChange(AuthState data) async {
+  /// Resuelve el arranque **sin tocar la red**: lee la sesión que Supabase ya
+  /// restauró del almacenamiento local y el rol/estado cacheados de la última
+  /// vez que hubo conexión. Se llama desde `main()` antes de `runApp`, así que
+  /// el primer frame ya sabe si hay usuario.
+  Future<void> warmUp() async {
+    try {
+      _session ??= _client.auth.currentSession;
+      final uid = _session?.user.id;
+      if (uid != null) {
+        final prefs = await SharedPreferences.getInstance();
+        _role = prefs.getString('$_rolePrefix$uid');
+        _status = prefs.getString('$_statusPrefix$uid');
+      }
+    } catch (_) {
+      // Sin caché seguimos: la sesión manda y el perfil se degrada a no-admin.
+    } finally {
+      _resolveBootstrap();
+    }
+  }
+
+  /// Da por terminado el arranque (idempotente).
+  void _resolveBootstrap() {
+    if (!_bootstrapping) return;
+    _bootstrapping = false;
+    notifyListeners();
+  }
+
+  void _onAuthChange(AuthState data) {
     _session = data.session;
     if (_session != null) {
-      await _loadProfile();
+      // Importante: el perfil se pide en segundo plano. Antes se esperaba
+      // aquí y, sin internet, esa petición dejaba el splash colgado.
+      unawaited(_loadProfile());
       if (!_syncedLocalProgress) {
         _syncedLocalProgress = true;
         // Best-effort: migrate legacy keys, pull this user's progress and push
         // local changes back up.
         unawaited(ReadingProgressStore().reconcileOnLogin());
+        // Y sube los reportes que se hicieron sin conexión.
+        unawaited(ReportStore().flushPending());
       }
     } else {
       _role = null;
@@ -63,7 +112,8 @@ class AuthController extends ChangeNotifier {
   }
 
   /// Caches the current user's role/status. Tolerant of transient failures:
-  /// on error we simply leave the cache as-is.
+  /// on error we simply leave the cache as-is (que es lo que permite seguir
+  /// siendo admin —o no— estando sin conexión).
   Future<void> _loadProfile() async {
     final uid = _session?.user.id;
     if (uid == null) return;
@@ -72,11 +122,35 @@ class AuthController extends ChangeNotifier {
           .from('profiles')
           .select('role, status')
           .eq('id', uid)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(kNetworkTimeout);
       _role = row?['role'] as String?;
       _status = row?['status'] as String?;
+      await _cacheProfile(uid);
+      notifyListeners();
     } catch (_) {
       // Keep whatever we had; the UI degrades to non-admin/unknown.
+    }
+  }
+
+  /// Guarda rol/estado para poder responder offline en el próximo arranque.
+  Future<void> _cacheProfile(String uid) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final role = _role;
+      final status = _status;
+      if (role == null) {
+        await prefs.remove('$_rolePrefix$uid');
+      } else {
+        await prefs.setString('$_rolePrefix$uid', role);
+      }
+      if (status == null) {
+        await prefs.remove('$_statusPrefix$uid');
+      } else {
+        await prefs.setString('$_statusPrefix$uid', status);
+      }
+    } catch (_) {
+      // La caché es un extra; si falla, no pasa nada.
     }
   }
 
@@ -114,7 +188,14 @@ class AuthController extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
+    final uid = _session?.user.id;
     await _client.auth.signOut();
+    if (uid != null) {
+      // Que la próxima cuenta en este dispositivo no herede el rol cacheado.
+      _role = null;
+      _status = null;
+      await _cacheProfile(uid);
+    }
   }
 
   @override

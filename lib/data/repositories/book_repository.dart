@@ -1,5 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/network/network_timeout.dart';
 import '../local/app_database.dart';
 import '../local/local_book_store.dart';
 import '../models/book_model.dart';
@@ -29,7 +30,8 @@ class BookRepository {
         .eq('book_id', bookId)
         .eq('block_type', 'image')
         .order('page_number', ascending: true)
-        .order('sequence_order', ascending: true);
+        .order('sequence_order', ascending: true)
+        .timeout(kNetworkTimeout);
     return (response as List)
         .map((json) => (json as Map<String, dynamic>)['image_url'] as String?)
         .where((url) => url != null && url.isNotEmpty)
@@ -38,9 +40,17 @@ class BookRepository {
   }
 
   /// The book's first image URL (cached), or null when it has no images.
+  ///
+  /// Sin conexión devuelve null (la tarjeta cae al placeholder de iniciales) y
+  /// **no** cachea ese null, para volver a intentarlo cuando haya internet.
   Future<String?> getFirstImageUrl(int bookId) async {
     if (_firstImageCache.containsKey(bookId)) return _firstImageCache[bookId];
-    final urls = await getBookImageUrls(bookId);
+    final List<String> urls;
+    try {
+      urls = await getBookImageUrls(bookId);
+    } catch (_) {
+      return null;
+    }
     final first = urls.isNotEmpty ? urls.first : null;
     _firstImageCache[bookId] = first;
     return first;
@@ -64,7 +74,8 @@ class BookRepository {
       final response = await client
           .from('books')
           .select('*')
-          .order('created_at', ascending: true);
+          .order('created_at', ascending: true)
+          .timeout(kNetworkTimeout);
 
       return (response as List)
           .map((json) => Book.fromJson(json as Map<String, dynamic>))
@@ -83,8 +94,12 @@ class BookRepository {
       return _local.getBook(id);
     }
 
-    final response =
-        await client.from('books').select('*').eq('id', id).maybeSingle();
+    final response = await client
+        .from('books')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle()
+        .timeout(kNetworkTimeout);
 
     if (response == null) return null;
     return Book.fromJson(response);

@@ -4,6 +4,8 @@ import 'dart:math';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../../core/network/network_timeout.dart';
+
 /// Persists the last page the reader was on, **per user and per book**.
 ///
 /// Offline-first: the local value (`shared_preferences`) is the source of
@@ -54,7 +56,8 @@ class ReadingProgressStore {
           .select('last_page')
           .eq('user_id', uid)
           .eq('book_id', bookId)
-          .maybeSingle();
+          .maybeSingle()
+          .timeout(kNetworkTimeout);
       return row?['last_page'] as int?;
     } catch (_) {
       return null;
@@ -84,7 +87,7 @@ class ReadingProgressStore {
         'last_page': page,
         'last_active_at': now,
         'updated_at': now,
-      }, onConflict: 'user_id,book_id');
+      }, onConflict: 'user_id,book_id').timeout(kNetworkTimeout);
     } catch (_) {
       // Offline / transient error: local save already succeeded.
     }
@@ -116,11 +119,13 @@ class ReadingProgressStore {
     }
 
     // 2. Pull server → local (max-merge).
+    var online = true;
     try {
       final rows = await _client
           .from('reading_progress')
           .select('book_id, last_page')
-          .eq('user_id', uid);
+          .eq('user_id', uid)
+          .timeout(kNetworkTimeout);
       for (final r in rows as List) {
         final bookId = r['book_id'] as int;
         final serverPage = (r['last_page'] as int?) ?? 1;
@@ -129,9 +134,13 @@ class ReadingProgressStore {
       }
     } catch (_) {
       // Offline: keep local as-is.
+      online = false;
     }
 
-    // 3. Push every local key for this user back up.
+    // 3. Push every local key for this user back up. Si el pull ya falló
+    // estamos sin conexión: no tiene sentido encadenar un timeout por libro,
+    // cada `setLastPage` y el próximo login volverán a intentarlo.
+    if (!online) return;
     final mine = '$_prefix${uid}_';
     for (final key in prefs.getKeys().toList()) {
       if (!key.startsWith(mine)) continue;

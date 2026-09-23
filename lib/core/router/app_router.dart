@@ -19,18 +19,24 @@ final appRouter = GoRouter(
     final onSplash = loc == '/splash';
     final onLogin = loc == '/login';
 
-    // Keep the splash visible until the restored session is resolved.
+    // Keep the splash visible until the restored session is resolved. La
+    // sesión se resuelve desde el almacenamiento local, así que esto no
+    // depende de tener internet.
     if (auth.bootstrapping) {
       return onSplash ? null : '/splash';
     }
+
+    // El splash decide cuándo irse (se navega solo tras mostrar la marca);
+    // aquí no lo expulsamos, o no llegaría a verse.
+    if (onSplash) return null;
 
     // Not logged in → only the login screen is reachable.
     if (!auth.isLoggedIn) {
       return onLogin ? null : '/login';
     }
 
-    // Logged in but sitting on splash/login → go to the library.
-    if (onSplash || onLogin) return '/';
+    // Logged in but sitting on login → go to the library.
+    if (onLogin) return '/';
 
     // /admin is admin-only.
     if (loc == '/admin' && !auth.isAdmin) return '/';

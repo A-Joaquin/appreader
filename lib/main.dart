@@ -16,9 +16,10 @@ Future<void> main() async {
     url: _supabaseUrl,
     publishableKey: _supabasePublishableKey,
   );
-  // Touch the singleton so it subscribes to auth changes before the router
-  // builds and starts evaluating redirects.
-  AuthController.instance;
+  // Resolve the session (from local storage, never the network) before the
+  // router builds, so a user who already logged in once opens straight into
+  // the library even with no connection.
+  await AuthController.instance.warmUp();
   final direction = await ReaderSettings.loadSavedDirection();
   final theme = await ReaderSettings.loadSavedTheme();
   runApp(BlackReaderApp(initialDirection: direction, initialTheme: theme));
