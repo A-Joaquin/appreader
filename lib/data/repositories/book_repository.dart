@@ -1,10 +1,31 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import '../../core/network/network_timeout.dart';
+import '../../core/network/mobile_data.dart';
 import '../local/app_database.dart';
 import '../local/local_book_store.dart';
 import '../models/book_model.dart';
 import 'cover_store.dart';
+
+/// De dónde salió la lista de la biblioteca.
+enum LibrarySource {
+  /// De Supabase: todos los libros.
+  online,
+
+  /// Solo los descargados porque hay datos móviles y el usuario no eligió
+  /// cargar en línea con ellos.
+  mobileDataSkipped,
+
+  /// Solo los descargados porque la red falló ([LibraryResult.reason]).
+  offlineFallback,
+}
+
+class LibraryResult {
+  const LibraryResult(this.books, {required this.source, this.reason});
+
+  final List<Book> books;
+  final LibrarySource source;
+  final String? reason;
+}
 
 class BookRepository {
   BookRepository(this.client, {LocalBookStore? local})
@@ -31,7 +52,7 @@ class BookRepository {
         .eq('block_type', 'image')
         .order('page_number', ascending: true)
         .order('sequence_order', ascending: true)
-        .timeout(kNetworkTimeout);
+        .timeout(MobileData.timeout);
     return (response as List)
         .map((json) => (json as Map<String, dynamic>)['image_url'] as String?)
         .where((url) => url != null && url.isNotEmpty)
@@ -67,23 +88,46 @@ class BookRepository {
     return getFirstImageUrl(book.id);
   }
 
+  Future<List<Book>> _fetchOnline() async {
+    final response = await client
+        .from('books')
+        .select('*')
+        .order('created_at', ascending: true)
+        .timeout(MobileData.timeout);
+    return (response as List)
+        .map((json) => Book.fromJson(json as Map<String, dynamic>))
+        .toList();
+  }
+
   /// Library list. Falls back to downloaded books when the network is
   /// unavailable, so the home list and reader drawer still work offline.
   Future<List<Book>> getBooks() async {
     try {
-      final response = await client
-          .from('books')
-          .select('*')
-          .order('created_at', ascending: true)
-          .timeout(kNetworkTimeout);
-
-      return (response as List)
-          .map((json) => Book.fromJson(json as Map<String, dynamic>))
-          .toList();
+      return await _fetchOnline();
     } catch (_) {
       final downloaded = await _local.getDownloadedBooks();
       if (downloaded.isNotEmpty) return downloaded;
       rethrow;
+    }
+  }
+
+  /// Biblioteca diciendo DE DÓNDE salió, para que la pantalla lo explique.
+  /// Con [online] = false (datos móviles sin permiso del usuario) no toca la
+  /// red. Si la red falla cae a lo descargado y guarda el motivo; sin nada
+  /// descargado relanza el error.
+  Future<LibraryResult> loadLibrary({required bool online}) async {
+    if (!online) {
+      return LibraryResult(await _local.getDownloadedBooks(),
+          source: LibrarySource.mobileDataSkipped);
+    }
+    try {
+      return LibraryResult(await _fetchOnline(), source: LibrarySource.online);
+    } catch (e) {
+      final downloaded = await _local.getDownloadedBooks();
+      if (downloaded.isEmpty) rethrow;
+      return LibraryResult(downloaded,
+          source: LibrarySource.offlineFallback,
+          reason: describeNetworkError(e));
     }
   }
 
@@ -99,7 +143,7 @@ class BookRepository {
         .select('*')
         .eq('id', id)
         .maybeSingle()
-        .timeout(kNetworkTimeout);
+        .timeout(MobileData.timeout);
 
     if (response == null) return null;
     return Book.fromJson(response);

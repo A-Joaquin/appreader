@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
@@ -90,14 +91,29 @@ class _HomeView extends StatelessWidget {
                     context.read<HomeBloc>().add(const LoadBooks()),
               );
             case HomeStatus.success:
-              if (state.books.isEmpty) {
-                return const Center(child: Text('No hay libros disponibles.'));
-              }
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: state.books.length,
-                itemBuilder: (context, index) =>
-                    _BookCard(book: state.books[index]),
+              final online = state.source == LibrarySource.online;
+              return RefreshIndicator(
+                onRefresh: () async =>
+                    context.read<HomeBloc>().add(const LoadBooks()),
+                child: ListView(
+                  // Siempre desplazable: así se puede tirar hacia abajo para
+                  // recargar aunque la lista sea corta o esté vacía.
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    if (!online) _LibraryNotice(state: state),
+                    if (state.books.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 48),
+                        child: Center(
+                          child: Text(online
+                              ? 'No hay libros disponibles.'
+                              : 'No tienes libros descargados.'),
+                        ),
+                      ),
+                    for (final book in state.books) _BookCard(book: book),
+                  ],
+                ),
               );
           }
         },
@@ -106,14 +122,79 @@ class _HomeView extends StatelessWidget {
   }
 }
 
-/// Account menu in the library AppBar: link to the admin panel (admins only)
-/// and sign out. After signing out the router redirects to /login.
+/// Aviso arriba de la biblioteca cuando NO se muestran todos los libros: por
+/// datos móviles (con la opción de cargar en línea esta vez o siempre) o
+/// porque la red falló (con el motivo y para reintentar).
+class _LibraryNotice extends StatelessWidget {
+  const _LibraryNotice({required this.state});
+
+  final HomeState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final bloc = context.read<HomeBloc>();
+    final mobile = state.source == LibrarySource.mobileDataSkipped;
+    final scheme = Theme.of(context).colorScheme;
+    final text = mobile
+        ? 'Estás con datos móviles: solo se muestran tus libros descargados.'
+        : 'No se pudo conectar (${state.offlineReason ?? 'sin conexión'}). '
+            'Se muestran solo tus libros descargados.';
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      color: scheme.secondaryContainer,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 12, 8, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(mobile ? Icons.signal_cellular_alt : Icons.cloud_off,
+                    color: scheme.onSecondaryContainer),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(text,
+                      style: TextStyle(color: scheme.onSecondaryContainer)),
+                ),
+              ],
+            ),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                spacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: () =>
+                        bloc.add(const LoadBooks(forceOnline: true)),
+                    child: Text(mobile ? 'Cargar en línea' : 'Reintentar'),
+                  ),
+                  if (mobile)
+                    TextButton(
+                      onPressed: () =>
+                          bloc.add(const SetMobileDataAllowed(true)),
+                      child: const Text('Siempre con datos'),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Account menu in the library AppBar: link to the admin panel (admins only),
+/// the mobile-data preference (phones only) and sign out. After signing out
+/// the router redirects to /login.
 class _AccountMenu extends StatelessWidget {
   const _AccountMenu();
 
   @override
   Widget build(BuildContext context) {
     final auth = AuthController.instance;
+    final bloc = context.read<HomeBloc>();
     return PopupMenuButton<String>(
       icon: const Icon(Icons.account_circle_outlined),
       onSelected: (value) async {
@@ -121,12 +202,21 @@ class _AccountMenu extends StatelessWidget {
           case 'admin':
             context.push('/admin');
             break;
+          case 'mobile_data':
+            bloc.add(SetMobileDataAllowed(!bloc.state.mobileDataAllowed));
+            break;
           case 'logout':
             await auth.signOut();
             break;
         }
       },
       itemBuilder: (context) => [
+        if (!kIsWeb)
+          CheckedPopupMenuItem(
+            value: 'mobile_data',
+            checked: bloc.state.mobileDataAllowed,
+            child: const Text('Cargar en línea con datos móviles'),
+          ),
         if (auth.isAdmin)
           const PopupMenuItem(
             value: 'admin',
