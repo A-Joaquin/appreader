@@ -13,6 +13,16 @@ QueryExecutor openConnection() {
     final file = File(p.join(dir.path, 'blackreader.sqlite'));
     // Workaround for older Android sqlite versions used by Drift.
     await applyWorkaroundToOpenSqlite3OnOldAndroidVersions();
-    return NativeDatabase.createInBackground(file);
+    return NativeDatabase.createInBackground(
+      file,
+      // La descarga en segundo plano escribe desde otro isolate (el servicio
+      // de Android) con su propia conexión. WAL deja leer mientras otro
+      // escribe, y busy_timeout espera en vez de fallar con «database is
+      // locked» si coinciden dos escrituras.
+      setup: (db) {
+        db.execute('PRAGMA journal_mode = WAL');
+        db.execute('PRAGMA busy_timeout = 15000');
+      },
+    );
   });
 }

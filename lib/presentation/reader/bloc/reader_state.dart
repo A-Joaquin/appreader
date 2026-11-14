@@ -16,6 +16,9 @@ class ReaderState extends Equatable {
     this.highlightEnd,
     this.tappedBodyWord,
     this.tappedBarWord,
+    this.audioBlockId,
+    this.audioStartMs,
+    this.audioEndMs,
     this.currentPage = 1,
     this.totalPages,
     this.isLoading = true,
@@ -48,6 +51,14 @@ class ReaderState extends Equatable {
   final String? tappedBodyWord;
   final String? tappedBarWord;
 
+  /// Where the tapped word sounds in its block's English audio: the block that
+  /// owns the audio and the word's span in ms. All `null` when the block has no
+  /// audio or the tap has no English word (punctuation, or a Spanish word with
+  /// no counterpart in esToEn).
+  final int? audioBlockId;
+  final int? audioStartMs;
+  final int? audioEndMs;
+
   final int currentPage;
   final int? totalPages;
   final bool isLoading;
@@ -68,6 +79,10 @@ class ReaderState extends Equatable {
     String? tappedBarWord,
     bool clearHighlight = false,
     bool clearSelection = false,
+    int? audioBlockId,
+    int? audioStartMs,
+    int? audioEndMs,
+    bool clearAudio = false,
     int? currentPage,
     int? totalPages,
     bool? isLoading,
@@ -101,6 +116,15 @@ class ReaderState extends Equatable {
       tappedBarWord: (clearSelection || clearHighlight)
           ? null
           : (tappedBarWord ?? this.tappedBarWord),
+      audioBlockId: (clearSelection || clearAudio)
+          ? null
+          : (audioBlockId ?? this.audioBlockId),
+      audioStartMs: (clearSelection || clearAudio)
+          ? null
+          : (audioStartMs ?? this.audioStartMs),
+      audioEndMs: (clearSelection || clearAudio)
+          ? null
+          : (audioEndMs ?? this.audioEndMs),
       currentPage: currentPage ?? this.currentPage,
       totalPages: totalPages ?? this.totalPages,
       isLoading: isLoading ?? this.isLoading,
@@ -121,6 +145,9 @@ class ReaderState extends Equatable {
         highlightEnd,
         tappedBodyWord,
         tappedBarWord,
+        audioBlockId,
+        audioStartMs,
+        audioEndMs,
         currentPage,
         totalPages,
         isLoading,

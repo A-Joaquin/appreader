@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -11,10 +12,14 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/settings/reader_settings.dart';
 import '../../core/widgets/brand_title.dart';
+import '../../data/audio/block_audio.dart';
 import '../../data/models/block_fragment_model.dart';
 import '../../data/models/book_model.dart';
 import '../../data/models/content_block_model.dart';
+import '../../data/local/app_database.dart';
+import '../../data/local/local_book_store.dart';
 import '../../data/models/word_report_model.dart';
+import '../../data/repositories/book_download_service.dart';
 import '../../data/repositories/book_repository.dart';
 import '../../data/repositories/reader_repository.dart';
 import '../../data/repositories/reading_progress_store.dart';
@@ -46,9 +51,48 @@ class ReaderScreen extends StatelessWidget {
         readerRepository: ReaderRepository(Supabase.instance.client),
         bookRepository: BookRepository(Supabase.instance.client),
       )..add(LoadPage(bookId: bookId, pageNumber: pageNumber)),
-      child: const _ReaderView(),
+      child: _AudioSync(bookId: bookId, child: const _ReaderView()),
     );
   }
+}
+
+/// If the book is downloaded and there's a connection, brings its audio up to
+/// date in the background (audio is uploaded bit by bit after people have
+/// downloaded the text) and reloads the page when something changed.
+class _AudioSync extends StatefulWidget {
+  const _AudioSync({required this.bookId, required this.child});
+
+  final int bookId;
+  final Widget child;
+
+  @override
+  State<_AudioSync> createState() => _AudioSyncState();
+}
+
+class _AudioSyncState extends State<_AudioSync> {
+  @override
+  void initState() {
+    super.initState();
+    _sync();
+  }
+
+  Future<void> _sync() async {
+    final local = LocalBookStore(AppDatabase.instance);
+    if (!await local.isDownloaded(widget.bookId)) return;
+    try {
+      final changed =
+          await BookDownloadService(Supabase.instance.client, local)
+              .syncAudio(widget.bookId);
+      if (changed > 0 && mounted) {
+        context.read<ReaderBloc>().add(const ReloadBook());
+      }
+    } catch (_) {
+      // Sin red: se lee con el audio que ya hay en el móvil.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _ReaderView extends StatefulWidget {
@@ -61,6 +105,32 @@ class _ReaderView extends StatefulWidget {
 class _ReaderViewState extends State<_ReaderView>
     with SingleTickerProviderStateMixin {
   final ItemScrollController _bookScrollController = ItemScrollController();
+
+  /// English audio of the blocks: single words, a whole block, or block
+  /// after block (see [_readAloud]).
+  final BlockAudioPlayer _audio = BlockAudioPlayer();
+
+  /// What is being read aloud (a block, or block after block), or `null`.
+  /// A single word is not "reading": it doesn't show the controls.
+  _ReadAloud? _reading;
+
+  /// The word sounding right now while reading aloud, highlighted in its
+  /// block. Polled from the player by [_wordTicker].
+  AudioWord? _playingWord;
+  Timer? _wordTicker;
+
+  /// Each read-aloud run gets a number; starting another one or stopping
+  /// bumps it, which tells the old run (still awaiting its block) to bow out.
+  int _readSession = 0;
+
+  /// A tap waits [TextBlockWidget.doubleTapWindow] before playing its word,
+  /// in case it turns out to be the first half of a double tap (which reads
+  /// on from that word instead).
+  Timer? _pendingWord;
+
+  /// True while the reader itself is turning the page to keep reading; any
+  /// other page change (swipe, buttons, jump) stops the reading.
+  bool _autoTurning = false;
 
   /// Drives the page-turn curl when the page changes. The bloc holds one page
   /// at a time: on a page change we snapshot the OUTGOING page to an image and
@@ -185,7 +255,20 @@ class _ReaderViewState extends State<_ReaderView>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Audio switched off: not muted, the feature goes off — stop everything.
+    if (!ReaderSettingsScope.of(context).audioEnabled) {
+      _pendingWord?.cancel();
+      if (_reading != null || _audio.isPlaying) _stopReading(rebuild: false);
+    }
+  }
+
+  @override
   void dispose() {
+    _pendingWord?.cancel();
+    _wordTicker?.cancel();
+    _audio.dispose();
     _curlImage?.dispose();
     _pageAnim.dispose();
     super.dispose();
@@ -211,6 +294,8 @@ class _ReaderViewState extends State<_ReaderView>
         listener: (context, state) {
           if (!state.isLoading && state.error == null) {
             if (state.currentPage != _renderedPage) {
+              // Turning the page by hand ends the reading aloud.
+              if (!_autoTurning && _reading != null) _stopReading();
               // Snapshot the outgoing page and curl it away over the new one.
               final previous = _renderedPage;
               _renderedPage = state.currentPage;
@@ -304,6 +389,19 @@ class _ReaderViewState extends State<_ReaderView>
                           ),
                         ),
                       ),
+                    if (_reading != null)
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 12,
+                        child: Center(
+                          child: _ReadAloudControls(
+                            reading: _reading!,
+                            onPauseResume: _togglePause,
+                            onStop: _stopReading,
+                          ),
+                        ),
+                      ),
                     Positioned(
                       top: 0,
                       left: 0,
@@ -333,6 +431,11 @@ class _ReaderViewState extends State<_ReaderView>
                                   .read<ReaderBloc>()
                                   .add(const HideTranslation()),
                               onReport: () => _openReport(context, state),
+                              onPlayWord: state.audioBlockId == null ||
+                                      !ReaderSettingsScope.of(context)
+                                          .audioEnabled
+                                  ? null
+                                  : () => _playWord(context, state),
                             ),
                           ),
                         ),
@@ -347,6 +450,278 @@ class _ReaderViewState extends State<_ReaderView>
         },
       ),
     );
+  }
+
+  /// Plays the tapped word from its block's audio. Offline it comes from the
+  /// downloaded audio; online and not downloaded, it's fetched on the spot.
+  Future<void> _playWord(BuildContext context, ReaderState state) async {
+    final messenger = ScaffoldMessenger.of(context);
+    String? path;
+    for (final b in state.blocks) {
+      if (b.id == state.audioBlockId) path = b.audioPath;
+    }
+    final start = state.audioStartMs;
+    final end = state.audioEndMs;
+    if (path == null || start == null || end == null) return;
+    if (_reading != null) _stopReading();
+    try {
+      await _audio.playWord(path, start, end);
+    } catch (_) {
+      _audioFailed(messenger);
+    }
+  }
+
+  void _audioFailed(ScaffoldMessengerState messenger) {
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(const SnackBar(
+        content: Text('No se pudo reproducir el audio. '
+            'Descárgalo en la ficha del libro para oírlo sin conexión.'),
+      ));
+  }
+
+  /// One tap on a word: the translation bar opens at once (as always) and,
+  /// with the audio on, the word sounds — after the double-tap window, so a
+  /// double tap reads on from the word instead of playing it alone.
+  void _onWordTap(
+    BuildContext context,
+    ContentBlock block,
+    int fragmentOrder,
+    int charOffset,
+    TranslationDirection direction,
+  ) {
+    final bloc = context.read<ReaderBloc>();
+    bloc.add(WordTapped(
+      blockId: block.id,
+      fragmentOrder: fragmentOrder,
+      charOffset: charOffset,
+      direction: direction,
+    ));
+    _pendingWord?.cancel();
+    if (!ReaderSettingsScope.of(context).audioEnabled) return;
+    _pendingWord = Timer(TextBlockWidget.doubleTapWindow, () {
+      if (!mounted) return;
+      final state = bloc.state;
+      if (state.audioBlockId != null) _playWord(context, state);
+    });
+  }
+
+  /// Two taps: read from that word on, block after block, turning pages.
+  void _onWordDoubleTap(
+    ReaderState state,
+    ContentBlock block,
+    int fragmentOrder,
+    int charOffset,
+    TranslationDirection direction,
+  ) {
+    _pendingWord?.cancel();
+    final word =
+        _audioWordFrom(state, block, fragmentOrder, charOffset, direction);
+    _readAloud(block, word?.startMs ?? 0, continuous: true);
+  }
+
+  /// Held for 2 s: read that paragraph (block), only that one.
+  void _onBlockLongPress(ContentBlock block) {
+    _pendingWord?.cancel();
+    HapticFeedback.mediumImpact();
+    _readAloud(block, 0, continuous: false);
+  }
+
+  /// The audio word to start reading from for a press on
+  /// ([fragmentOrder], [charOffset]) — offsets in the body's language. On
+  /// punctuation or an unread citation it takes the next word that sounds.
+  AudioWord? _audioWordFrom(
+    ReaderState state,
+    ContentBlock block,
+    int fragmentOrder,
+    int charOffset,
+    TranslationDirection direction,
+  ) {
+    BlockFragment? fragment;
+    for (final f in state.pageFragments) {
+      if (f.blockId == block.id && f.fragmentOrder == fragmentOrder) {
+        fragment = f;
+        break;
+      }
+    }
+    final charStart = fragment?.charStart;
+    if (fragment == null || charStart == null) return null;
+    final english = direction == TranslationDirection.enToEs
+        ? charOffset
+        : fragment.entryAtTransOffset(charOffset)?.origStart;
+    if (english == null) return null;
+    final offset = charStart + english;
+    for (final word in block.audioWords) {
+      if (word.charEnd > offset) return word;
+    }
+    return null;
+  }
+
+  /// Reads [block] aloud from [fromMs]. With [continuous] it carries on with
+  /// the next blocks that have audio, turning the page when this one runs
+  /// out, until the book ends, it's stopped, or the page is turned by hand.
+  Future<void> _readAloud(
+    ContentBlock block,
+    int fromMs, {
+    required bool continuous,
+  }) async {
+    if (block.audioPath == null || !block.hasAudio) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final session = ++_readSession;
+    setState(() {
+      _reading = _ReadAloud(blockId: block.id, continuous: continuous);
+      _playingWord = null;
+    });
+    _startWordTicker();
+
+    var current = block;
+    var from = fromMs;
+    while (true) {
+      final next = continuous ? _nextOnPage(current) : null;
+      final nextPath = next?.audioPath;
+      if (nextPath != null) BlockAudioPlayer.prefetch(nextPath);
+
+      bool reachedEnd;
+      try {
+        reachedEnd = await _audio.playFrom(current.audioPath!, from);
+      } catch (_) {
+        reachedEnd = false;
+        if (session == _readSession) _audioFailed(messenger);
+      }
+      if (!mounted || session != _readSession) return;
+      if (!reachedEnd || !continuous) break;
+
+      final following = next ?? await _firstOnFollowingPages();
+      if (!mounted || session != _readSession) return;
+      if (following == null) break;
+      current = following;
+      from = 0;
+      setState(() {
+        _reading = _reading?.copyWith(blockId: following.id);
+        _playingWord = null;
+      });
+      _scrollToBlock(following.id);
+    }
+    _stopReading();
+  }
+
+  /// Next block with audio after [block] on the page on screen.
+  ContentBlock? _nextOnPage(ContentBlock block) {
+    final blocks = context.read<ReaderBloc>().state.blocks;
+    final index = blocks.indexWhere((b) => b.id == block.id);
+    if (index < 0) return null;
+    for (var i = index + 1; i < blocks.length; i++) {
+      if (blocks[i].hasAudio) return blocks[i];
+    }
+    return null;
+  }
+
+  /// Pages in a row without audio after which reading aloud gives up (a
+  /// stretch of the book whose audio isn't generated yet).
+  static const int _maxSilentPages = 5;
+
+  /// Turns pages until one has a block with audio, and returns it. Gives up
+  /// at the end of the book, on a load error, or after [_maxSilentPages].
+  Future<ContentBlock?> _firstOnFollowingPages() async {
+    final bloc = context.read<ReaderBloc>();
+    for (var tries = 0; tries < _maxSilentPages; tries++) {
+      final state = bloc.state;
+      final total = state.totalPages;
+      if (total != null && state.currentPage >= total) return null;
+      final target = state.currentPage + 1;
+      _autoTurning = true;
+      bloc.add(NavigateToPage(target));
+      ReaderState loaded;
+      try {
+        loaded = await bloc.stream
+            .firstWhere((s) =>
+                !s.isLoading && (s.currentPage == target || s.error != null))
+            .timeout(const Duration(seconds: 30));
+      } catch (_) {
+        _autoTurning = false;
+        return null;
+      }
+      // The page-change listener runs when that state is built; wait for the
+      // frame before treating page changes as manual again.
+      await WidgetsBinding.instance.endOfFrame;
+      _autoTurning = false;
+      if (loaded.error != null) return null;
+      for (final b in loaded.blocks) {
+        if (b.hasAudio) return b;
+      }
+    }
+    return null;
+  }
+
+  void _scrollToBlock(int blockId) {
+    final index = context
+        .read<ReaderBloc>()
+        .state
+        .blocks
+        .indexWhere((b) => b.id == blockId);
+    if (index < 0 || !_bookScrollController.isAttached) return;
+    _bookScrollController.scrollTo(
+      index: index,
+      alignment: 0.15,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  /// Follows the player to highlight the word that is sounding.
+  void _startWordTicker() {
+    _wordTicker?.cancel();
+    _wordTicker = Timer.periodic(const Duration(milliseconds: 50), (_) {
+      final reading = _reading;
+      if (reading == null || !mounted) return;
+      ContentBlock? block;
+      for (final b in context.read<ReaderBloc>().state.blocks) {
+        if (b.id == reading.blockId) block = b;
+      }
+      if (block == null) return;
+      final position = _audio.positionMs;
+      AudioWord? word;
+      for (final w in block.audioWords) {
+        if (w.startMs <= position && position < w.endMs) {
+          word = w;
+          break;
+        }
+      }
+      // Between words (pauses) the last one stays lit; otherwise it flickers.
+      if (word != null && word != _playingWord) {
+        setState(() => _playingWord = word);
+      }
+    });
+  }
+
+  void _togglePause() {
+    final reading = _reading;
+    if (reading == null) return;
+    if (reading.paused) {
+      _audio.resume();
+    } else {
+      _audio.pause();
+    }
+    setState(() => _reading = reading.copyWith(paused: !reading.paused));
+  }
+
+  /// Stops any audio and the reading aloud. [rebuild] is false when called
+  /// while the widget is already rebuilding (didChangeDependencies).
+  void _stopReading({bool rebuild = true}) {
+    _readSession++;
+    _wordTicker?.cancel();
+    _wordTicker = null;
+    _audio.stop();
+    if (_reading == null && _playingWord == null) return;
+    if (rebuild && mounted) {
+      setState(() {
+        _reading = null;
+        _playingWord = null;
+      });
+    } else {
+      _reading = null;
+      _playingWord = null;
+    }
   }
 
   /// Abre la hoja de reporte para el bloque que se está leyendo y envía el
@@ -406,7 +781,10 @@ class _ReaderViewState extends State<_ReaderView>
       case 'code_snippet':
         return CodeBlockWidget(block: block);
       default:
-        final direction = ReaderSettingsScope.of(context).direction;
+        final settings = ReaderSettingsScope.of(context);
+        final direction = settings.direction;
+        // Audio off → the audio gestures aren't even listened for.
+        final audio = settings.audioEnabled && block.hasAudio;
         return TextBlockWidget(
           block: block,
           fragments: state.pageFragments,
@@ -414,20 +792,100 @@ class _ReaderViewState extends State<_ReaderView>
           selectedBlockId: state.selectedBlockId,
           selectedFragmentOrder: state.selectedFragmentOrder,
           selectedCharOffset: state.selectedCharOffset,
-          onWordTap: (fragmentOrder, charOffset) {
-            // The top gap is reserved permanently (see [_reservedTop]), so the
-            // bar always has room and tapping a word never shifts the page.
-            context.read<ReaderBloc>().add(
-                  WordTapped(
-                    blockId: block.id,
-                    fragmentOrder: fragmentOrder,
-                    charOffset: charOffset,
-                    direction: direction,
-                  ),
-                );
-          },
+          playingWord: _reading?.blockId == block.id ? _playingWord : null,
+          // The top gap is reserved permanently (see [_reservedTop]), so the
+          // bar always has room and tapping a word never shifts the page.
+          onWordTap: (fragmentOrder, charOffset) => _onWordTap(
+            context,
+            block,
+            fragmentOrder,
+            charOffset,
+            direction,
+          ),
+          onWordDoubleTap: audio
+              ? (fragmentOrder, charOffset) => _onWordDoubleTap(
+                    state,
+                    block,
+                    fragmentOrder,
+                    charOffset,
+                    direction,
+                  )
+              : null,
+          onWordLongPress: audio ? (_, _) => _onBlockLongPress(block) : null,
         );
     }
+  }
+}
+
+/// What is being read aloud: the block sounding now, whether it will go on
+/// to the next blocks, and whether it's paused.
+class _ReadAloud {
+  const _ReadAloud({
+    required this.blockId,
+    required this.continuous,
+    this.paused = false,
+  });
+
+  final int blockId;
+  final bool continuous;
+  final bool paused;
+
+  _ReadAloud copyWith({int? blockId, bool? paused}) => _ReadAloud(
+        blockId: blockId ?? this.blockId,
+        continuous: continuous,
+        paused: paused ?? this.paused,
+      );
+}
+
+/// Floating pill while reading aloud: what's going on, pause/resume, stop.
+class _ReadAloudControls extends StatelessWidget {
+  const _ReadAloudControls({
+    required this.reading,
+    required this.onPauseResume,
+    required this.onStop,
+  });
+
+  final _ReadAloud reading;
+  final VoidCallback onPauseResume;
+  final VoidCallback onStop;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      elevation: 6,
+      color: scheme.surfaceContainerHigh,
+      shape: const StadiumBorder(),
+      child: Padding(
+        padding: const EdgeInsets.only(left: 16, right: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.graphic_eq, size: 18, color: scheme.primary),
+            const SizedBox(width: 8),
+            Text(
+              reading.continuous ? 'Leyendo en voz alta' : 'Leyendo el bloque',
+              style: TextStyle(color: scheme.onSurface, fontSize: 14),
+            ),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: Icon(reading.paused
+                  ? Icons.play_arrow_rounded
+                  : Icons.pause_rounded),
+              tooltip: reading.paused ? 'Continuar' : 'Pausa',
+              color: scheme.primary,
+              onPressed: onPauseResume,
+            ),
+            IconButton(
+              icon: const Icon(Icons.stop_rounded),
+              tooltip: 'Detener',
+              color: scheme.onSurface.withValues(alpha: 0.7),
+              onPressed: onStop,
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -843,6 +1301,19 @@ class _ReaderSettingsActions extends StatelessWidget {
           tooltip: 'Aumentar texto',
           visualDensity: VisualDensity.compact,
           onPressed: settings.canIncreaseFont ? settings.increaseFont : null,
+        ),
+        IconButton(
+          icon: Icon(
+            settings.audioEnabled
+                ? Icons.volume_up_outlined
+                : Icons.volume_off_outlined,
+            size: 22,
+          ),
+          tooltip: settings.audioEnabled
+              ? 'Audio en inglés activado · toca para desactivarlo'
+              : 'Audio en inglés desactivado · toca para activarlo',
+          visualDensity: VisualDensity.compact,
+          onPressed: settings.toggleAudio,
         ),
         const _ControlSelector(),
         const SizedBox(width: 4),

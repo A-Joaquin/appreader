@@ -15,6 +15,9 @@ class TextBlockWidget extends StatefulWidget {
     this.selectedBlockId,
     this.selectedFragmentOrder,
     this.selectedCharOffset,
+    this.onWordDoubleTap,
+    this.onWordLongPress,
+    this.playingWord,
   });
 
   final ContentBlock block;
@@ -33,6 +36,27 @@ class TextBlockWidget extends StatefulWidget {
   final int? selectedFragmentOrder;
   final int? selectedCharOffset;
 
+  /// Two quick taps on a word, with that word's `(fragmentOrder, charOffset)`
+  /// like [onWordTap] (read aloud from there on, block after block). `null`
+  /// turns double-tap detection off (audio disabled or no audio).
+  final void Function(int fragmentOrder, int charOffset)? onWordDoubleTap;
+
+  /// Pressing a word for [longPressDuration] (read this block aloud). The
+  /// word is `null` when the press landed between words. `null` turns the
+  /// gesture off.
+  final void Function(int? fragmentOrder, int? charOffset)? onWordLongPress;
+
+  /// The word currently sounding in this block, to highlight it while the
+  /// block is read aloud. Its offsets are into the block's
+  /// `original_content`, so it's only shown when the body is in English.
+  final AudioWord? playingWord;
+
+  /// How long a press must be held to read the block aloud.
+  static const Duration longPressDuration = Duration(seconds: 2);
+
+  /// Max gap between two taps to count as a double tap.
+  static const Duration doubleTapWindow = Duration(milliseconds: 300);
+
   @override
   State<TextBlockWidget> createState() => _TextBlockWidgetState();
 }
@@ -48,8 +72,38 @@ class _TextBlockWidgetState extends State<TextBlockWidget> {
     return _recognizers.putIfAbsent(
       key,
       () => TapGestureRecognizer()
-        ..onTap = () => widget.onWordTap(fragmentOrder, charOffset),
+        // onTapDown llega a los ~100 ms de apoyar el dedo: así, si la
+        // pulsación acaba siendo larga, se sabe sobre qué palabra fue.
+        ..onTapDown = (_) {
+          _pressed = key;
+        }
+        ..onTap = () => _handleTap(fragmentOrder, charOffset),
     );
+  }
+
+  /// Word under the finger in the current press (see [_recognizerFor]).
+  _WordKey? _pressed;
+
+  /// When the previous tap happened, to spot a double tap.
+  DateTime? _lastTap;
+
+  /// The tap always goes through as a normal tap (the translation bar opens
+  /// at once); a second one within [TextBlockWidget.doubleTapWindow] is
+  /// reported as a double tap on top. Detected by hand because a TextSpan
+  /// takes a single recognizer, and a DoubleTapGestureRecognizer would delay
+  /// every single tap until the window closed.
+  void _handleTap(int fragmentOrder, int charOffset) {
+    widget.onWordTap(fragmentOrder, charOffset);
+    final onDoubleTap = widget.onWordDoubleTap;
+    if (onDoubleTap == null) return;
+    final now = DateTime.now();
+    final last = _lastTap;
+    if (last != null && now.difference(last) <= TextBlockWidget.doubleTapWindow) {
+      _lastTap = null;
+      onDoubleTap(fragmentOrder, charOffset);
+    } else {
+      _lastTap = now;
+    }
   }
 
   @override
@@ -97,6 +151,10 @@ class _TextBlockWidgetState extends State<TextBlockWidget> {
       color: scheme.primary,
       backgroundColor: scheme.primary.withValues(alpha: 0.18),
     );
+    // La palabra que está sonando: mismo criterio (sin cambiar el grosor).
+    final playingStyle = baseStyle.copyWith(
+      backgroundColor: scheme.tertiary.withValues(alpha: 0.28),
+    );
 
     final blockFragments = widget.fragments
         .where((fragment) => fragment.blockId == block.id)
@@ -116,6 +174,15 @@ class _TextBlockWidgetState extends State<TextBlockWidget> {
 
       final rendered = _render(block, blockFragments, esToEn);
       final text = rendered.text;
+
+      // Para resaltar la palabra que suena hace falta el offset de cada
+      // palabra en `original_content`: el del fragmento (char_start) más el de
+      // la palabra dentro de él. Solo en inglés (el audio es en inglés).
+      final playing = esToEn ? null : widget.playingWord;
+      final fragmentStart = <int, int?>{
+        for (final fragment in blockFragments)
+          fragment.fragmentOrder: fragment.charStart,
+      };
 
       // Ancho de columna del PDF en ESTE bloque: la línea más larga. Sirve de
       // vara de medir para distinguir un corte de línea del PDF (la línea iba
@@ -206,9 +273,16 @@ class _TextBlockWidgetState extends State<TextBlockWidget> {
           final isSelected = isSelectedBlock &&
               owner.fragmentOrder == widget.selectedFragmentOrder &&
               wordStart == widget.selectedCharOffset;
+          final base = fragmentStart[owner.fragmentOrder];
+          final isPlaying = playing != null &&
+              base != null &&
+              playing.charStart <= base + wordStart &&
+              base + wordStart < playing.charEnd;
           spans.add(TextSpan(
             text: token,
-            style: isSelected ? selectedStyle : baseStyle,
+            style: isSelected
+                ? selectedStyle
+                : (isPlaying ? playingStyle : baseStyle),
             recognizer: _recognizerFor(owner.fragmentOrder, wordStart),
           ));
         }
@@ -216,9 +290,34 @@ class _TextBlockWidgetState extends State<TextBlockWidget> {
       }
     }
 
+    Widget paragraph = RichText(text: TextSpan(children: spans));
+    final onLongPress = widget.onWordLongPress;
+    if (onLongPress != null) {
+      paragraph = RawGestureDetector(
+        gestures: {
+          LongPressGestureRecognizer:
+              GestureRecognizerFactoryWithHandlers<LongPressGestureRecognizer>(
+            () => LongPressGestureRecognizer(
+              duration: TextBlockWidget.longPressDuration,
+            ),
+            (recognizer) => recognizer.onLongPress = () {
+              final word = _pressed;
+              onLongPress(word?.fragmentOrder, word?.charOffset);
+            },
+          ),
+        },
+        // Cada pulsación empieza sin palabra: si cae entre palabras, ningún
+        // recognizer de palabra la marca y se lee desde el principio.
+        child: Listener(
+          onPointerDown: (_) => _pressed = null,
+          child: paragraph,
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: RichText(text: TextSpan(children: spans)),
+      child: paragraph,
     );
   }
 

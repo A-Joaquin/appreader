@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -80,16 +81,18 @@ class _DetailBody extends StatelessWidget {
           Text(
             book.title,
             textAlign: TextAlign.center,
-            style: theme.textTheme.headlineSmall
-                ?.copyWith(fontWeight: FontWeight.w700),
+            style: theme.textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
           if (book.author != null && book.author!.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               book.author!,
               textAlign: TextAlign.center,
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(color: theme.colorScheme.secondary),
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: theme.colorScheme.secondary,
+              ),
             ),
           ],
           const SizedBox(height: 16),
@@ -151,8 +154,10 @@ enum _OfflineStatus { checking, available, downloaded }
 
 class _OfflineButtonState extends State<_OfflineButton> {
   final LocalBookStore _local = LocalBookStore(AppDatabase.instance);
-  late final BookDownloadService _downloader =
-      BookDownloadService(Supabase.instance.client, _local);
+  late final BookDownloadService _downloader = BookDownloadService(
+    Supabase.instance.client,
+    _local,
+  );
   final DownloadManager _manager = DownloadManager.instance;
 
   _OfflineStatus _status = _OfflineStatus.checking;
@@ -162,11 +167,38 @@ class _OfflineButtonState extends State<_OfflineButton> {
   /// se ofrece completarlo.
   int _missingImages = 0;
 
+  /// Duración del audio en inglés del libro, y la parte que aún no está en el
+  /// móvil. Ambos 0 si el libro no tiene audio (o en web, que lo reproduce
+  /// directamente desde la URL).
+  int _audioTotalMs = 0;
+  int _audioMissingMs = 0;
+
+  /// Bloques que el servidor tiene y esta descarga no (descargas viejas,
+  /// cortadas en 1000). Se ofrece actualizar la descarga.
+  int _missingBlocks = 0;
+
   @override
   void initState() {
     super.initState();
     _manager.addListener(_onManagerChanged);
     _refresh();
+    _checkServer();
+  }
+
+  /// Una vez por visita, y solo si hay red: trae el audio que se haya subido
+  /// (o quitado) desde la descarga, y mira si a la descarga le faltan bloques.
+  /// Sin conexión no pasa nada: se queda con lo que hay en el móvil.
+  Future<void> _checkServer() async {
+    if (!await _local.isDownloaded(widget.book.id)) return;
+    try {
+      final missingBlocks = await _downloader.missingBlocks(widget.book.id);
+      final changed = await _downloader.syncAudio(widget.book.id);
+      if (!mounted) return;
+      setState(() => _missingBlocks = missingBlocks);
+      if (changed > 0) await _refresh();
+    } catch (_) {
+      // Sin red o servidor caído: el libro descargado sigue sirviendo.
+    }
   }
 
   @override
@@ -185,42 +217,129 @@ class _OfflineButtonState extends State<_OfflineButton> {
 
   Future<void> _refresh() async {
     final downloaded = await _local.isDownloaded(widget.book.id);
-    final missing =
-        downloaded ? await _downloader.missingImages(widget.book.id) : const [];
+    final missing = downloaded
+        ? await _downloader.missingImages(widget.book.id)
+        : const [];
+    final audio = downloaded && !kIsWeb
+        ? await _downloader.audioStatus(widget.book.id)
+        : null;
     if (!mounted) return;
     setState(() {
-      _status =
-          downloaded ? _OfflineStatus.downloaded : _OfflineStatus.available;
+      _status = downloaded
+          ? _OfflineStatus.downloaded
+          : _OfflineStatus.available;
       _missingImages = missing.length;
+      _audioTotalMs = audio?.totalMs ?? 0;
+      _audioMissingMs = audio?.missingMs ?? 0;
     });
   }
 
-  Future<void> _download() async {
-    await _manager.start(widget.book.id, _downloader);
+  Future<void> _downloadAudio() async {
+    await _manager.downloadAudio(
+      widget.book.id,
+      _downloader,
+      title: widget.book.title,
+    );
     if (!mounted) return;
     final error = _manager.errorOf(widget.book.id);
-    _toast(error == null
-        ? 'Descargado para leer sin conexión'
-        : 'No se pudo descargar: $error');
     _manager.clearError(widget.book.id);
+    _toast(switch (error) {
+      null => 'Audio descargado',
+      DownloadCancelled() => 'Descarga cancelada',
+      _ => 'No se pudo bajar el audio: $error',
+    });
+  }
+
+  Future<void> _deleteAudio() async {
+    await _downloader.deleteAudio(widget.book.id);
+    await _refresh();
+    if (mounted) _toast('Audio eliminado del dispositivo');
+  }
+
+  /// AAC mono a 32 kbps ≈ 4 KB por segundo de voz.
+  static String _audioSize(int ms) {
+    final mb = ms / 1000 * 4 / 1024;
+    return mb < 1 ? '< 1 MB' : '~${mb.round()} MB';
+  }
+
+  static String _audioLength(int ms) {
+    final minutes = (ms / 60000).round();
+    return minutes < 60
+        ? '$minutes min'
+        : '${minutes ~/ 60} h ${minutes % 60} min';
+  }
+
+  Future<void> _download() async {
+    await _manager.start(widget.book.id, _downloader, title: widget.book.title);
+    if (!mounted) return;
+    final error = _manager.errorOf(widget.book.id);
+    _manager.clearError(widget.book.id);
+    if (error != null) {
+      _toast(
+        error is DownloadCancelled
+            ? 'Descarga cancelada'
+            : 'No se pudo descargar: $error',
+      );
+      return;
+    }
+    setState(() => _missingBlocks = 0);
+    // Antes decía «Descargado» aunque alguna imagen no hubiera bajado, y no
+    // se notaba hasta leer sin conexión y encontrar el hueco.
+    final missing = await _downloader.missingImages(widget.book.id);
+    if (!mounted) return;
+    _toast(
+      missing.isEmpty
+          ? 'Descargado para leer sin conexión'
+          : 'Descargado, pero ${_imagesText(missing.length)} no se '
+                '${missing.length == 1 ? 'pudo' : 'pudieron'} bajar. '
+                'Toca «Completar descarga» con conexión.',
+    );
   }
 
   Future<void> _completeImages() async {
-    await _manager.completeImages(widget.book.id, _downloader);
+    await _manager.completeImages(
+      widget.book.id,
+      _downloader,
+      title: widget.book.title,
+    );
     if (!mounted) return;
     final error = _manager.errorOf(widget.book.id);
+    _manager.clearError(widget.book.id);
     if (error != null) {
-      _toast('No se pudieron bajar las imágenes: $error');
-      _manager.clearError(widget.book.id);
+      _toast(
+        error is DownloadCancelled
+            ? 'Descarga cancelada'
+            : 'No se pudieron bajar las imágenes: $error',
+      );
+      return;
     }
+    final missing = await _downloader.missingImages(widget.book.id);
+    if (!mounted) return;
+    _toast(
+      missing.isEmpty
+          ? 'Imágenes completas: disponible sin conexión'
+          : 'Aún ${missing.length == 1 ? 'falta' : 'faltan'} '
+                '${_imagesText(missing.length)}. Revisa la conexión y reintenta.',
+    );
   }
 
+  static String _imagesText(int n) => n == 1 ? '1 imagen' : '$n imágenes';
+
   Future<void> _delete() async {
+    // Imágenes y audio primero: salen de la base local, y sin ella ya no se
+    // sabría qué archivos eran de este libro (se quedarían ocupando sitio).
+    try {
+      await _downloader.deleteImages(widget.book.id);
+      await _downloader.deleteAudio(widget.book.id);
+    } catch (_) {
+      // Que no impida eliminar el libro.
+    }
     await _local.deleteBook(widget.book.id);
     if (!mounted) return;
     setState(() {
       _status = _OfflineStatus.available;
       _missingImages = 0;
+      _missingBlocks = 0;
     });
     _toast('Descarga eliminada');
   }
@@ -244,15 +363,27 @@ class _OfflineButtonState extends State<_OfflineButton> {
         children: [
           LinearProgressIndicator(value: progress == 0 ? null : progress),
           const SizedBox(height: 8),
-          Text('Descargando… $pct%',
-              style: Theme.of(context).textTheme.bodySmall),
+          Text(
+            'Descargando… $pct%',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
           const SizedBox(height: 2),
           Text(
-            'Puedes salir de aquí: la descarga sigue.',
+            _manager.canCancel
+                ? 'Puedes cerrar la app: la descarga sigue y te avisa al '
+                      'terminar.'
+                : 'Puedes salir de aquí: la descarga sigue.',
+            textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurface.withValues(alpha: 0.5),
-                ),
+              color: scheme.onSurface.withValues(alpha: 0.5),
+            ),
           ),
+          if (_manager.canCancel)
+            TextButton.icon(
+              onPressed: () => _manager.cancel(widget.book.id),
+              icon: const Icon(Icons.close, size: 18),
+              label: const Text('Cancelar'),
+            ),
         ],
       );
     }
@@ -278,11 +409,12 @@ class _OfflineButtonState extends State<_OfflineButton> {
                     _missingImages == 0
                         ? 'Disponible sin conexión'
                         : 'Falta${_missingImages == 1 ? '' : 'n'} '
-                            '$_missingImages imagen'
-                            '${_missingImages == 1 ? '' : 'es'}',
+                              '$_missingImages imagen'
+                              '${_missingImages == 1 ? '' : 'es'}',
                     style: TextStyle(
-                      color:
-                          _missingImages == 0 ? scheme.primary : scheme.error,
+                      color: _missingImages == 0
+                          ? scheme.primary
+                          : scheme.error,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -295,12 +427,55 @@ class _OfflineButtonState extends State<_OfflineButton> {
                 ),
               ],
             ),
+            if (_missingBlocks > 0)
+              TextButton.icon(
+                onPressed: _download,
+                icon: const Icon(Icons.sync, size: 18),
+                label: Text(
+                  'Actualizar descarga (faltan $_missingBlocks bloques)',
+                ),
+              ),
             if (_missingImages > 0)
               TextButton.icon(
                 onPressed: _completeImages,
                 icon: const Icon(Icons.download_outlined, size: 18),
                 label: const Text('Completar descarga'),
               ),
+            if (_audioTotalMs > 0) ...[
+              const SizedBox(height: 4),
+              if (_audioMissingMs == 0)
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.headphones, size: 18, color: scheme.primary),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        'Audio en inglés sin conexión '
+                        '(${_audioLength(_audioTotalMs)})',
+                        style: TextStyle(
+                          color: scheme.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    TextButton(
+                      onPressed: _deleteAudio,
+                      child: const Text('Quitar'),
+                    ),
+                  ],
+                )
+              else
+                TextButton.icon(
+                  onPressed: _downloadAudio,
+                  icon: const Icon(Icons.headphones, size: 18),
+                  label: Text(
+                    'Descargar audio en inglés '
+                    '(${_audioSize(_audioMissingMs)})',
+                  ),
+                ),
+            ],
           ],
         );
 
@@ -333,9 +508,13 @@ class _Cover extends StatelessWidget {
     if (images.isEmpty) {
       messenger
         ..hideCurrentSnackBar()
-        ..showSnackBar(const SnackBar(
-          content: Text('Este libro no tiene imágenes para usar como portada.'),
-        ));
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Este libro no tiene imágenes para usar como portada.',
+            ),
+          ),
+        );
       return;
     }
     await showModalBottomSheet<void>(
@@ -352,7 +531,9 @@ class _Cover extends StatelessWidget {
       valueListenable: CoverStore.revision,
       builder: (context, _, _) {
         return FutureBuilder<String?>(
-          future: BookRepository(Supabase.instance.client).resolveCoverUrl(book),
+          future: BookRepository(
+            Supabase.instance.client,
+          ).resolveCoverUrl(book),
           builder: (context, snapshot) {
             final url = snapshot.data;
             if (snapshot.connectionState != ConnectionState.done) {
@@ -364,7 +545,10 @@ class _Cover extends StatelessWidget {
             }
             if (url == null || url.isEmpty) {
               return _PlaceholderCover(
-                  book: book, width: _width, height: _height);
+                book: book,
+                width: _width,
+                height: _height,
+              );
             }
             return CachedNetworkImage(
               imageUrl: url,
@@ -426,10 +610,9 @@ class _CoverPickerSheet extends StatelessWidget {
                 Expanded(
                   child: Text(
                     'Elegir portada',
-                    style: Theme.of(context)
-                        .textTheme
-                        .titleLarge
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 TextButton.icon(
@@ -446,8 +629,7 @@ class _CoverPickerSheet extends StatelessWidget {
             Flexible(
               child: GridView.builder(
                 shrinkWrap: true,
-                gridDelegate:
-                    const SliverGridDelegateWithFixedCrossAxisCount(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 3,
                   crossAxisSpacing: 10,
                   mainAxisSpacing: 10,
@@ -506,11 +688,11 @@ class _PlaceholderCover extends StatelessWidget {
     final initials = book.title.trim().isEmpty
         ? '?'
         : book.title
-            .trim()
-            .split(RegExp(r'\s+'))
-            .take(2)
-            .map((word) => word.isNotEmpty ? word[0].toUpperCase() : '')
-            .join();
+              .trim()
+              .split(RegExp(r'\s+'))
+              .take(2)
+              .map((word) => word.isNotEmpty ? word[0].toUpperCase() : '')
+              .join();
 
     return Container(
       width: width,

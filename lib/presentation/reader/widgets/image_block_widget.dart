@@ -1,6 +1,7 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 
+import '../../../data/local/offline_cache.dart';
 import '../../../data/models/content_block_model.dart';
 
 class ImageBlockWidget extends StatelessWidget {
@@ -20,6 +21,8 @@ class ImageBlockWidget extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: CachedNetworkImage(
         imageUrl: imageUrl,
+        // La misma caché en la que la descarga deja las imágenes del libro.
+        cacheManager: BookImages.cache,
         width: double.infinity,
         fit: BoxFit.contain,
         placeholder: (context, url) => Container(

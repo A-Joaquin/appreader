@@ -28,6 +28,12 @@ class LocalBlocks extends Table {
   TextColumn get originalContent => text().nullable()();
   TextColumn get imageUrl => text().nullable()();
 
+  /// English audio of the block (schema v2). `audio_words` is stored as the
+  /// raw JSON string, like `word_map` in [LocalFragments].
+  TextColumn get audioPath => text().nullable()();
+  IntColumn get audioMs => integer().nullable()();
+  TextColumn get audioWordsJson => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }
@@ -55,5 +61,18 @@ class AppDatabase extends _$AppDatabase {
   static final AppDatabase instance = AppDatabase();
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+        onUpgrade: (m, from, to) async {
+          // v2: audio por bloque. Los libros descargados antes quedan sin
+          // audio hasta que se vuelvan a descargar.
+          if (from < 2) {
+            await m.addColumn(localBlocks, localBlocks.audioPath);
+            await m.addColumn(localBlocks, localBlocks.audioMs);
+            await m.addColumn(localBlocks, localBlocks.audioWordsJson);
+          }
+        },
+      );
 }

@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/widgets/brand_title.dart';
+import '../../data/background/download_notifications.dart';
 import '../../data/models/book_model.dart';
 import '../../data/repositories/auth_controller.dart';
 import '../../data/repositories/book_repository.dart';
@@ -23,9 +24,47 @@ class HomeScreen extends StatelessWidget {
     return BlocProvider(
       create: (_) => HomeBloc(BookRepository(Supabase.instance.client))
         ..add(const LoadBooks()),
-      child: const _HomeView(),
+      child: const _OpenNotifiedBook(child: _HomeView()),
     );
   }
+}
+
+/// Abre la ficha del libro cuyo aviso de «descarga terminada» se tocó. Vive
+/// en la biblioteca porque es la primera pantalla tras el splash y el login,
+/// y sigue montada debajo de las demás (se navega con push).
+class _OpenNotifiedBook extends StatefulWidget {
+  const _OpenNotifiedBook({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_OpenNotifiedBook> createState() => _OpenNotifiedBookState();
+}
+
+class _OpenNotifiedBookState extends State<_OpenNotifiedBook> {
+  @override
+  void initState() {
+    super.initState();
+    DownloadNotifications.pendingBook.addListener(_open);
+    // El toque pudo llegar antes de que esta pantalla existiera.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _open());
+  }
+
+  @override
+  void dispose() {
+    DownloadNotifications.pendingBook.removeListener(_open);
+    super.dispose();
+  }
+
+  void _open() {
+    final bookId = DownloadNotifications.pendingBook.value;
+    if (bookId == null || !mounted) return;
+    DownloadNotifications.pendingBook.value = null;
+    context.push('/book/$bookId');
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _HomeView extends StatelessWidget {

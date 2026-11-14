@@ -16,19 +16,22 @@ enum TranslationDirection { enToEs, esToEn }
 /// modeled here rather than via Flutter's [ThemeMode]. See [AppTheme].
 enum ReaderTheme { system, light, sepia, dark }
 
-/// App-wide reading preferences: theme, reading font scale and the translation
-/// direction.
+/// App-wide reading preferences: theme, reading font scale, the translation
+/// direction and whether the English audio is on.
 ///
 /// Held high in the widget tree by [ReaderSettingsScope] so any screen can read
-/// and mutate it. [theme] and [direction] are persisted (shared_preferences).
+/// and mutate it. [theme], [direction] and [audioEnabled] are persisted
+/// (shared_preferences).
 class ReaderSettings extends ChangeNotifier {
   ReaderSettings({
     ReaderTheme theme = ReaderTheme.system,
     double fontScale = 1.0,
     TranslationDirection direction = TranslationDirection.enToEs,
+    bool audioEnabled = true,
   })  : _theme = theme,
         _fontScale = fontScale,
-        _direction = direction;
+        _direction = direction,
+        _audioEnabled = audioEnabled;
 
   static const double minFontScale = 0.8;
   static const double maxFontScale = 1.6;
@@ -36,14 +39,20 @@ class ReaderSettings extends ChangeNotifier {
 
   static const String _directionPrefKey = 'translation_direction';
   static const String _themePrefKey = 'reader_theme';
+  static const String _audioPrefKey = 'reader_audio_enabled';
 
   ReaderTheme _theme;
   double _fontScale;
   TranslationDirection _direction;
+  bool _audioEnabled;
 
   ReaderTheme get theme => _theme;
   double get fontScale => _fontScale;
   TranslationDirection get direction => _direction;
+
+  /// English audio on/off. Off doesn't just mute: the reader turns the whole
+  /// feature off (no word/block playback, no read-aloud gestures, no speaker).
+  bool get audioEnabled => _audioEnabled;
 
   bool get canIncreaseFont => _fontScale < maxFontScale - 1e-9;
   bool get canDecreaseFont => _fontScale > minFontScale + 1e-9;
@@ -84,6 +93,13 @@ class ReaderSettings extends ChangeNotifier {
     _persistDirection();
   }
 
+  void toggleAudio() {
+    _audioEnabled = !_audioEnabled;
+    notifyListeners();
+    SharedPreferences.getInstance()
+        .then((prefs) => prefs.setBool(_audioPrefKey, _audioEnabled));
+  }
+
   Future<void> _persistDirection() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_directionPrefKey, _direction.name);
@@ -114,6 +130,12 @@ class ReaderSettings extends ChangeNotifier {
       if (t.name == saved) return t;
     }
     return ReaderTheme.system;
+  }
+
+  /// Reads whether the audio was left on (defaults to on).
+  static Future<bool> loadSavedAudioEnabled() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool(_audioPrefKey) ?? true;
   }
 }
 

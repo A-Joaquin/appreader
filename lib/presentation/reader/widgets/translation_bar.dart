@@ -15,6 +15,7 @@ class TranslationBar extends StatefulWidget {
     this.barWord,
     this.onClose,
     this.onReport,
+    this.onPlayWord,
   });
 
   final List<BlockFragment> fragments;
@@ -43,6 +44,10 @@ class TranslationBar extends StatefulWidget {
 
   /// Abre el reporte de problemas del bloque que se está leyendo (bandera).
   final VoidCallback? onReport;
+
+  /// Plays the tapped English word, cut from its block's audio. `null` hides
+  /// the speaker: the block has no audio or the tap has no English word.
+  final VoidCallback? onPlayWord;
 
   @override
   State<TranslationBar> createState() => _TranslationBarState();
@@ -129,6 +134,14 @@ class _TranslationBarState extends State<TranslationBar> {
                       ),
                     ),
                   ),
+                  if (widget.onPlayWord != null)
+                    IconButton(
+                      icon: const Icon(Icons.volume_up_rounded, size: 22),
+                      tooltip: 'Escuchar en inglés',
+                      visualDensity: VisualDensity.compact,
+                      color: scheme.primary,
+                      onPressed: widget.onPlayWord,
+                    ),
                   if (widget.onReport != null)
                     IconButton(
                       icon: const Icon(Icons.flag_outlined, size: 20),

@@ -539,6 +539,39 @@ class $LocalBlocksTable extends LocalBlocks
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _audioPathMeta = const VerificationMeta(
+    'audioPath',
+  );
+  @override
+  late final GeneratedColumn<String> audioPath = GeneratedColumn<String>(
+    'audio_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _audioMsMeta = const VerificationMeta(
+    'audioMs',
+  );
+  @override
+  late final GeneratedColumn<int> audioMs = GeneratedColumn<int>(
+    'audio_ms',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _audioWordsJsonMeta = const VerificationMeta(
+    'audioWordsJson',
+  );
+  @override
+  late final GeneratedColumn<String> audioWordsJson = GeneratedColumn<String>(
+    'audio_words_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -548,6 +581,9 @@ class $LocalBlocksTable extends LocalBlocks
     blockType,
     originalContent,
     imageUrl,
+    audioPath,
+    audioMs,
+    audioWordsJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -610,6 +646,27 @@ class $LocalBlocksTable extends LocalBlocks
         imageUrl.isAcceptableOrUnknown(data['image_url']!, _imageUrlMeta),
       );
     }
+    if (data.containsKey('audio_path')) {
+      context.handle(
+        _audioPathMeta,
+        audioPath.isAcceptableOrUnknown(data['audio_path']!, _audioPathMeta),
+      );
+    }
+    if (data.containsKey('audio_ms')) {
+      context.handle(
+        _audioMsMeta,
+        audioMs.isAcceptableOrUnknown(data['audio_ms']!, _audioMsMeta),
+      );
+    }
+    if (data.containsKey('audio_words_json')) {
+      context.handle(
+        _audioWordsJsonMeta,
+        audioWordsJson.isAcceptableOrUnknown(
+          data['audio_words_json']!,
+          _audioWordsJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -647,6 +704,18 @@ class $LocalBlocksTable extends LocalBlocks
         DriftSqlType.string,
         data['${effectivePrefix}image_url'],
       ),
+      audioPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}audio_path'],
+      ),
+      audioMs: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}audio_ms'],
+      ),
+      audioWordsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}audio_words_json'],
+      ),
     );
   }
 
@@ -664,6 +733,12 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
   final String blockType;
   final String? originalContent;
   final String? imageUrl;
+
+  /// English audio of the block (schema v2). `audio_words` is stored as the
+  /// raw JSON string, like `word_map` in [LocalFragments].
+  final String? audioPath;
+  final int? audioMs;
+  final String? audioWordsJson;
   const LocalBlock({
     required this.id,
     required this.bookId,
@@ -672,6 +747,9 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
     required this.blockType,
     this.originalContent,
     this.imageUrl,
+    this.audioPath,
+    this.audioMs,
+    this.audioWordsJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -690,6 +768,15 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
     }
     if (!nullToAbsent || imageUrl != null) {
       map['image_url'] = Variable<String>(imageUrl);
+    }
+    if (!nullToAbsent || audioPath != null) {
+      map['audio_path'] = Variable<String>(audioPath);
+    }
+    if (!nullToAbsent || audioMs != null) {
+      map['audio_ms'] = Variable<int>(audioMs);
+    }
+    if (!nullToAbsent || audioWordsJson != null) {
+      map['audio_words_json'] = Variable<String>(audioWordsJson);
     }
     return map;
   }
@@ -711,6 +798,15 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
       imageUrl: imageUrl == null && nullToAbsent
           ? const Value.absent()
           : Value(imageUrl),
+      audioPath: audioPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(audioPath),
+      audioMs: audioMs == null && nullToAbsent
+          ? const Value.absent()
+          : Value(audioMs),
+      audioWordsJson: audioWordsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(audioWordsJson),
     );
   }
 
@@ -727,6 +823,9 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
       blockType: serializer.fromJson<String>(json['blockType']),
       originalContent: serializer.fromJson<String?>(json['originalContent']),
       imageUrl: serializer.fromJson<String?>(json['imageUrl']),
+      audioPath: serializer.fromJson<String?>(json['audioPath']),
+      audioMs: serializer.fromJson<int?>(json['audioMs']),
+      audioWordsJson: serializer.fromJson<String?>(json['audioWordsJson']),
     );
   }
   @override
@@ -740,6 +839,9 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
       'blockType': serializer.toJson<String>(blockType),
       'originalContent': serializer.toJson<String?>(originalContent),
       'imageUrl': serializer.toJson<String?>(imageUrl),
+      'audioPath': serializer.toJson<String?>(audioPath),
+      'audioMs': serializer.toJson<int?>(audioMs),
+      'audioWordsJson': serializer.toJson<String?>(audioWordsJson),
     };
   }
 
@@ -751,6 +853,9 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
     String? blockType,
     Value<String?> originalContent = const Value.absent(),
     Value<String?> imageUrl = const Value.absent(),
+    Value<String?> audioPath = const Value.absent(),
+    Value<int?> audioMs = const Value.absent(),
+    Value<String?> audioWordsJson = const Value.absent(),
   }) => LocalBlock(
     id: id ?? this.id,
     bookId: bookId ?? this.bookId,
@@ -763,6 +868,11 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
         ? originalContent.value
         : this.originalContent,
     imageUrl: imageUrl.present ? imageUrl.value : this.imageUrl,
+    audioPath: audioPath.present ? audioPath.value : this.audioPath,
+    audioMs: audioMs.present ? audioMs.value : this.audioMs,
+    audioWordsJson: audioWordsJson.present
+        ? audioWordsJson.value
+        : this.audioWordsJson,
   );
   LocalBlock copyWithCompanion(LocalBlocksCompanion data) {
     return LocalBlock(
@@ -779,6 +889,11 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
           ? data.originalContent.value
           : this.originalContent,
       imageUrl: data.imageUrl.present ? data.imageUrl.value : this.imageUrl,
+      audioPath: data.audioPath.present ? data.audioPath.value : this.audioPath,
+      audioMs: data.audioMs.present ? data.audioMs.value : this.audioMs,
+      audioWordsJson: data.audioWordsJson.present
+          ? data.audioWordsJson.value
+          : this.audioWordsJson,
     );
   }
 
@@ -791,7 +906,10 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
           ..write('sequenceOrder: $sequenceOrder, ')
           ..write('blockType: $blockType, ')
           ..write('originalContent: $originalContent, ')
-          ..write('imageUrl: $imageUrl')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('audioPath: $audioPath, ')
+          ..write('audioMs: $audioMs, ')
+          ..write('audioWordsJson: $audioWordsJson')
           ..write(')'))
         .toString();
   }
@@ -805,6 +923,9 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
     blockType,
     originalContent,
     imageUrl,
+    audioPath,
+    audioMs,
+    audioWordsJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -816,7 +937,10 @@ class LocalBlock extends DataClass implements Insertable<LocalBlock> {
           other.sequenceOrder == this.sequenceOrder &&
           other.blockType == this.blockType &&
           other.originalContent == this.originalContent &&
-          other.imageUrl == this.imageUrl);
+          other.imageUrl == this.imageUrl &&
+          other.audioPath == this.audioPath &&
+          other.audioMs == this.audioMs &&
+          other.audioWordsJson == this.audioWordsJson);
 }
 
 class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
@@ -827,6 +951,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
   final Value<String> blockType;
   final Value<String?> originalContent;
   final Value<String?> imageUrl;
+  final Value<String?> audioPath;
+  final Value<int?> audioMs;
+  final Value<String?> audioWordsJson;
   const LocalBlocksCompanion({
     this.id = const Value.absent(),
     this.bookId = const Value.absent(),
@@ -835,6 +962,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
     this.blockType = const Value.absent(),
     this.originalContent = const Value.absent(),
     this.imageUrl = const Value.absent(),
+    this.audioPath = const Value.absent(),
+    this.audioMs = const Value.absent(),
+    this.audioWordsJson = const Value.absent(),
   });
   LocalBlocksCompanion.insert({
     this.id = const Value.absent(),
@@ -844,6 +974,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
     required String blockType,
     this.originalContent = const Value.absent(),
     this.imageUrl = const Value.absent(),
+    this.audioPath = const Value.absent(),
+    this.audioMs = const Value.absent(),
+    this.audioWordsJson = const Value.absent(),
   }) : bookId = Value(bookId),
        blockType = Value(blockType);
   static Insertable<LocalBlock> custom({
@@ -854,6 +987,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
     Expression<String>? blockType,
     Expression<String>? originalContent,
     Expression<String>? imageUrl,
+    Expression<String>? audioPath,
+    Expression<int>? audioMs,
+    Expression<String>? audioWordsJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -863,6 +999,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
       if (blockType != null) 'block_type': blockType,
       if (originalContent != null) 'original_content': originalContent,
       if (imageUrl != null) 'image_url': imageUrl,
+      if (audioPath != null) 'audio_path': audioPath,
+      if (audioMs != null) 'audio_ms': audioMs,
+      if (audioWordsJson != null) 'audio_words_json': audioWordsJson,
     });
   }
 
@@ -874,6 +1013,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
     Value<String>? blockType,
     Value<String?>? originalContent,
     Value<String?>? imageUrl,
+    Value<String?>? audioPath,
+    Value<int?>? audioMs,
+    Value<String?>? audioWordsJson,
   }) {
     return LocalBlocksCompanion(
       id: id ?? this.id,
@@ -883,6 +1025,9 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
       blockType: blockType ?? this.blockType,
       originalContent: originalContent ?? this.originalContent,
       imageUrl: imageUrl ?? this.imageUrl,
+      audioPath: audioPath ?? this.audioPath,
+      audioMs: audioMs ?? this.audioMs,
+      audioWordsJson: audioWordsJson ?? this.audioWordsJson,
     );
   }
 
@@ -910,6 +1055,15 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
     if (imageUrl.present) {
       map['image_url'] = Variable<String>(imageUrl.value);
     }
+    if (audioPath.present) {
+      map['audio_path'] = Variable<String>(audioPath.value);
+    }
+    if (audioMs.present) {
+      map['audio_ms'] = Variable<int>(audioMs.value);
+    }
+    if (audioWordsJson.present) {
+      map['audio_words_json'] = Variable<String>(audioWordsJson.value);
+    }
     return map;
   }
 
@@ -922,7 +1076,10 @@ class LocalBlocksCompanion extends UpdateCompanion<LocalBlock> {
           ..write('sequenceOrder: $sequenceOrder, ')
           ..write('blockType: $blockType, ')
           ..write('originalContent: $originalContent, ')
-          ..write('imageUrl: $imageUrl')
+          ..write('imageUrl: $imageUrl, ')
+          ..write('audioPath: $audioPath, ')
+          ..write('audioMs: $audioMs, ')
+          ..write('audioWordsJson: $audioWordsJson')
           ..write(')'))
         .toString();
   }
@@ -1711,6 +1868,9 @@ typedef $$LocalBlocksTableCreateCompanionBuilder =
       required String blockType,
       Value<String?> originalContent,
       Value<String?> imageUrl,
+      Value<String?> audioPath,
+      Value<int?> audioMs,
+      Value<String?> audioWordsJson,
     });
 typedef $$LocalBlocksTableUpdateCompanionBuilder =
     LocalBlocksCompanion Function({
@@ -1721,6 +1881,9 @@ typedef $$LocalBlocksTableUpdateCompanionBuilder =
       Value<String> blockType,
       Value<String?> originalContent,
       Value<String?> imageUrl,
+      Value<String?> audioPath,
+      Value<int?> audioMs,
+      Value<String?> audioWordsJson,
     });
 
 class $$LocalBlocksTableFilterComposer
@@ -1764,6 +1927,21 @@ class $$LocalBlocksTableFilterComposer
 
   ColumnFilters<String> get imageUrl => $composableBuilder(
     column: $table.imageUrl,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get audioPath => $composableBuilder(
+    column: $table.audioPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get audioMs => $composableBuilder(
+    column: $table.audioMs,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get audioWordsJson => $composableBuilder(
+    column: $table.audioWordsJson,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1811,6 +1989,21 @@ class $$LocalBlocksTableOrderingComposer
     column: $table.imageUrl,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get audioPath => $composableBuilder(
+    column: $table.audioPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get audioMs => $composableBuilder(
+    column: $table.audioMs,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get audioWordsJson => $composableBuilder(
+    column: $table.audioWordsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$LocalBlocksTableAnnotationComposer
@@ -1848,6 +2041,17 @@ class $$LocalBlocksTableAnnotationComposer
 
   GeneratedColumn<String> get imageUrl =>
       $composableBuilder(column: $table.imageUrl, builder: (column) => column);
+
+  GeneratedColumn<String> get audioPath =>
+      $composableBuilder(column: $table.audioPath, builder: (column) => column);
+
+  GeneratedColumn<int> get audioMs =>
+      $composableBuilder(column: $table.audioMs, builder: (column) => column);
+
+  GeneratedColumn<String> get audioWordsJson => $composableBuilder(
+    column: $table.audioWordsJson,
+    builder: (column) => column,
+  );
 }
 
 class $$LocalBlocksTableTableManager
@@ -1888,6 +2092,9 @@ class $$LocalBlocksTableTableManager
                 Value<String> blockType = const Value.absent(),
                 Value<String?> originalContent = const Value.absent(),
                 Value<String?> imageUrl = const Value.absent(),
+                Value<String?> audioPath = const Value.absent(),
+                Value<int?> audioMs = const Value.absent(),
+                Value<String?> audioWordsJson = const Value.absent(),
               }) => LocalBlocksCompanion(
                 id: id,
                 bookId: bookId,
@@ -1896,6 +2103,9 @@ class $$LocalBlocksTableTableManager
                 blockType: blockType,
                 originalContent: originalContent,
                 imageUrl: imageUrl,
+                audioPath: audioPath,
+                audioMs: audioMs,
+                audioWordsJson: audioWordsJson,
               ),
           createCompanionCallback:
               ({
@@ -1906,6 +2116,9 @@ class $$LocalBlocksTableTableManager
                 required String blockType,
                 Value<String?> originalContent = const Value.absent(),
                 Value<String?> imageUrl = const Value.absent(),
+                Value<String?> audioPath = const Value.absent(),
+                Value<int?> audioMs = const Value.absent(),
+                Value<String?> audioWordsJson = const Value.absent(),
               }) => LocalBlocksCompanion.insert(
                 id: id,
                 bookId: bookId,
@@ -1914,6 +2127,9 @@ class $$LocalBlocksTableTableManager
                 blockType: blockType,
                 originalContent: originalContent,
                 imageUrl: imageUrl,
+                audioPath: audioPath,
+                audioMs: audioMs,
+                audioWordsJson: audioWordsJson,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

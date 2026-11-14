@@ -1,28 +1,42 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'core/router/app_router.dart';
 import 'core/settings/reader_settings.dart';
+import 'core/supabase_config.dart';
 import 'core/theme/app_theme.dart';
+import 'data/background/background_download.dart';
+import 'data/background/download_notifications.dart';
 import 'data/repositories/auth_controller.dart';
-
-const _supabaseUrl = 'https://ewyiuywiyykekoearvlo.supabase.co';
-const _supabasePublishableKey =
-    'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImV3eWl1eXdpeXlrZWtvZWFydmxvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA0NTAyMTcsImV4cCI6MjA5NjAyNjIxN30.faabc5HgHW9lX_YBePvmPV1e-FJGu55EXCyytbs3rLk';
+import 'data/repositories/download_manager.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(
-    url: _supabaseUrl,
-    publishableKey: _supabasePublishableKey,
+    url: supabaseUrl,
+    publishableKey: supabasePublishableKey,
   );
   // Resolve the session (from local storage, never the network) before the
   // router builds, so a user who already logged in once opens straight into
   // the library even with no connection.
   await AuthController.instance.warmUp();
+  // Descargas en segundo plano (Android): el canal con el servicio, los
+  // avisos de «libro listo», y retomar lo que quedara a medias.
+  BackgroundDownloads.init();
+  await DownloadNotifications.init(handleTaps: true);
+  unawaited(DownloadManager.instance.attach());
   final direction = await ReaderSettings.loadSavedDirection();
   final theme = await ReaderSettings.loadSavedTheme();
-  runApp(BlackReaderApp(initialDirection: direction, initialTheme: theme));
+  final audioEnabled = await ReaderSettings.loadSavedAudioEnabled();
+  runApp(
+    BlackReaderApp(
+      initialDirection: direction,
+      initialTheme: theme,
+      initialAudioEnabled: audioEnabled,
+    ),
+  );
 }
 
 class BlackReaderApp extends StatefulWidget {
@@ -30,10 +44,12 @@ class BlackReaderApp extends StatefulWidget {
     super.key,
     required this.initialDirection,
     required this.initialTheme,
+    this.initialAudioEnabled = true,
   });
 
   final TranslationDirection initialDirection;
   final ReaderTheme initialTheme;
+  final bool initialAudioEnabled;
 
   @override
   State<BlackReaderApp> createState() => _BlackReaderAppState();
@@ -43,6 +59,7 @@ class _BlackReaderAppState extends State<BlackReaderApp> {
   late final ReaderSettings _settings = ReaderSettings(
     direction: widget.initialDirection,
     theme: widget.initialTheme,
+    audioEnabled: widget.initialAudioEnabled,
   );
 
   @override

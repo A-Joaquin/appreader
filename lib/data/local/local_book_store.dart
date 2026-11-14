@@ -78,6 +78,54 @@ class LocalBookStore {
         .toList();
   }
 
+  /// Audio of a downloaded book: bucket path → duration in ms (0 if unknown).
+  /// Blocks without audio are left out.
+  Future<Map<String, int>> getAudio(int bookId) async {
+    final query = _db.select(_db.localBlocks)
+      ..where((t) => t.bookId.equals(bookId) & t.audioPath.isNotNull());
+    final rows = await query.get();
+    return {for (final r in rows) r.audioPath!: r.audioMs ?? 0};
+  }
+
+  /// How many blocks of the book are stored.
+  Future<int> countBlocks(int bookId) async {
+    final count = _db.localBlocks.id.count();
+    final query = _db.selectOnly(_db.localBlocks)
+      ..addColumns([count])
+      ..where(_db.localBlocks.bookId.equals(bookId));
+    return (await query.getSingle()).read(count) ?? 0;
+  }
+
+  /// Audio of every block of a downloaded book that has some: block id →
+  /// (bucket path, duration in ms). To compare against the server.
+  Future<Map<int, ({String path, int? ms})>> getAudioIndex(int bookId) async {
+    final query = _db.select(_db.localBlocks)
+      ..where((t) => t.bookId.equals(bookId) & t.audioPath.isNotNull());
+    final rows = await query.get();
+    return {for (final r in rows) r.id: (path: r.audioPath!, ms: r.audioMs)};
+  }
+
+  /// Writes the audio columns of some blocks (`null` path = no audio).
+  /// [wordsJson] is the raw `audio_words` JSON, as stored by [saveBook].
+  Future<void> updateAudio(
+    List<({int id, String? path, int? ms, String? wordsJson})> rows,
+  ) async {
+    if (rows.isEmpty) return;
+    await _db.batch((batch) {
+      for (final r in rows) {
+        batch.update(
+          _db.localBlocks,
+          LocalBlocksCompanion(
+            audioPath: Value(r.path),
+            audioMs: Value(r.ms),
+            audioWordsJson: Value(r.wordsJson),
+          ),
+          where: (t) => t.id.equals(r.id),
+        );
+      }
+    });
+  }
+
   Future<List<BlockFragment>> getFragmentsForBlocks(List<int> blockIds) async {
     if (blockIds.isEmpty) return [];
     final query = _db.select(_db.localFragments)
@@ -120,6 +168,9 @@ class LocalBookStore {
               blockType: b.blockType,
               originalContent: Value(b.originalContent),
               imageUrl: Value(b.imageUrl),
+              audioPath: Value(b.audioPath),
+              audioMs: Value(b.audioMs),
+              audioWordsJson: Value(_encodeAudioWords(b)),
             ),
           ),
         );
@@ -163,6 +214,11 @@ class LocalBookStore {
         .go();
   }
 
+  static String? _encodeAudioWords(ContentBlock b) {
+    if (b.audioWords.isEmpty) return null;
+    return jsonEncode(b.audioWords.map((w) => w.toJson()).toList());
+  }
+
   static String? _encodeWordMap(BlockFragment f) {
     if (f.wordMap.isEmpty) return null;
     return jsonEncode(f.wordMap.map((e) => e.toJson()).toList());
@@ -176,6 +232,11 @@ class LocalBookStore {
         'block_type': r.blockType,
         'original_content': r.originalContent,
         'image_url': r.imageUrl,
+        'audio_path': r.audioPath,
+        'audio_ms': r.audioMs,
+        'audio_words': r.audioWordsJson != null
+            ? jsonDecode(r.audioWordsJson!) as List
+            : null,
       });
 
   BlockFragment _toFragment(LocalFragment r) => BlockFragment.fromJson({

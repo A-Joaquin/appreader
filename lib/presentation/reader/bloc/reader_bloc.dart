@@ -33,6 +33,7 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
     on<HideTranslation>(_onHideTranslation);
     on<NavigateToPage>(_onNavigateToPage);
     on<RefreshPage>(_onRefreshPage);
+    on<ReloadBook>(_onReloadBook);
     on<PrefetchPage>(_onPrefetchPage);
   }
 
@@ -159,10 +160,20 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
         ? fragment.entryAtOffset(event.charOffset)
         : fragment.entryAtTransOffset(event.charOffset);
 
+    // The English word to pronounce, as an offset into the block's
+    // `original_content`: in enToEs it's the tapped word itself (even without a
+    // word_map entry); in esToEn it's the tapped Spanish word's counterpart.
+    final englishOffset = isEnToEs ? event.charOffset : entry?.origStart;
+    final audioWord = _audioWordFor(fragment, englishOffset);
+
     // Bar shows the OPPOSITE language: enToEs highlights `trans_*` over the
     // Spanish text; esToEn highlights `orig_*` over the English text. The pill
     // reads "<body word> → <bar word>".
     emit(state.copyWith(
+      audioBlockId: audioWord == null ? null : fragment.blockId,
+      audioStartMs: audioWord?.startMs,
+      audioEndMs: audioWord?.endMs,
+      clearAudio: audioWord == null,
       isBarVisible: true,
       targetFragment: index,
       selectedBlockId: event.blockId,
@@ -176,12 +187,44 @@ class ReaderBloc extends Bloc<ReaderEvent, ReaderState> {
     ));
   }
 
+  /// Where the English word at [offsetInFragment] (relative to the fragment's
+  /// `original_text`) sounds in its block's audio. Fragment offsets become
+  /// block offsets by adding `char_start`, which matches `original_content`
+  /// exactly (checked on the whole corpus, PENDIENTE_22-09 §4).
+  AudioWord? _audioWordFor(BlockFragment fragment, int? offsetInFragment) {
+    final charStart = fragment.charStart;
+    if (offsetInFragment == null || charStart == null) return null;
+    for (final block in state.blocks) {
+      if (block.id == fragment.blockId) {
+        return block.hasAudio
+            ? block.audioWordAt(charStart + offsetInFragment)
+            : null;
+      }
+    }
+    return null;
+  }
+
   void _onHideTranslation(HideTranslation event, Emitter<ReaderState> emit) {
     emit(state.copyWith(isBarVisible: false, clearSelection: true));
   }
 
   void _onNavigateToPage(NavigateToPage event, Emitter<ReaderState> emit) {
     add(LoadPage(bookId: bookId, pageNumber: event.pageNumber));
+  }
+
+  /// Unlike [RefreshPage] there's no spinner: the page is swapped in place
+  /// once reloaded, so a background sync doesn't flash the screen.
+  Future<void> _onReloadBook(
+    ReloadBook event,
+    Emitter<ReaderState> emit,
+  ) async {
+    _cache.clear();
+    try {
+      final page = await _fetchPage(state.currentPage);
+      emit(state.copyWith(blocks: page.blocks, pageFragments: page.fragments));
+    } catch (_) {
+      // Se queda la página que ya se ve.
+    }
   }
 
   void _onRefreshPage(RefreshPage event, Emitter<ReaderState> emit) {

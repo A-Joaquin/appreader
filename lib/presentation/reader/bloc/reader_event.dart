@@ -60,6 +60,12 @@ class RefreshPage extends ReaderEvent {
   const RefreshPage();
 }
 
+/// The book's stored data changed underneath (e.g. new audio synced): drop
+/// every cached page and reload the one on screen.
+class ReloadBook extends ReaderEvent {
+  const ReloadBook();
+}
+
 /// Internal event: load a page into the cache in the background (no UI change)
 /// so navigating to it later is instant.
 class PrefetchPage extends ReaderEvent {
